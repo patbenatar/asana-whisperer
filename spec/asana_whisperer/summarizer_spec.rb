@@ -11,8 +11,8 @@ RSpec.describe AsanaWhisperer::Summarizer do
       summarizer.send(:plain_to_html, text)
     end
 
-    it "wraps ## headings in <h3> tags" do
-      expect(html_for("## Requirements")).to include("<h3>Requirements</h3>")
+    it "wraps ## headings in <strong> tags" do
+      expect(html_for("## Requirements")).to include("<strong>Requirements</strong>")
     end
 
     it "wraps list items in <li> tags inside a <ul>" do
@@ -30,16 +30,16 @@ RSpec.describe AsanaWhisperer::Summarizer do
 
     it "closes a list before the next heading" do
       output = html_for("- Item\n## Next Section")
-      ul_close = output.index("</ul>")
-      h3_open  = output.index("<h3>")
-      expect(ul_close).to be < h3_open
+      ul_close    = output.index("</ul>")
+      strong_open = output.index("<strong>")
+      expect(ul_close).to be < strong_open
     end
 
     it "closes a list before a paragraph" do
-      output = html_for("- Item\nSome paragraph text")
+      output   = html_for("- Item\nSome paragraph text")
       ul_close = output.index("</ul>")
-      p_open   = output.index("<p>Some paragraph text</p>")
-      expect(ul_close).to be < p_open
+      text_pos = output.index("Some paragraph text")
+      expect(ul_close).to be < text_pos
     end
 
     it "escapes & in text content" do
@@ -50,8 +50,8 @@ RSpec.describe AsanaWhisperer::Summarizer do
       expect(html_for("- <tag>")).to include("&lt;tag&gt;")
     end
 
-    it "escapes double quotes" do
-      expect(html_for('- say "hello"')).to include("say &quot;hello&quot;")
+    it "does not escape double quotes (not required for Asana HTML)" do
+      expect(html_for('- say "hello"')).to include('say "hello"')
     end
 
     it "skips blank lines rather than emitting empty <p> tags" do
@@ -59,14 +59,9 @@ RSpec.describe AsanaWhisperer::Summarizer do
       expect(output).not_to include("<p></p>")
     end
 
-    it "includes a date header" do
+    it "renders the heading text inside <strong> tags" do
       output = html_for("## Requirements\n- x")
-      expect(output).to include("via asana-whisperer</em>")
-    end
-
-    it "wraps the header in an <h2> tag" do
-      output = html_for("## Requirements\n- x")
-      expect(output).to include("<h2>Meeting Requirements Summary</h2>")
+      expect(output).to include("<strong>Requirements</strong>")
     end
   end
 
@@ -140,6 +135,74 @@ RSpec.describe AsanaWhisperer::Summarizer do
     end
   end
 
+  # ── #build_discovery_prompt ────────────────────────────────────────────────
+
+  describe "#build_discovery_prompt (private)" do
+    def prompt(**kwargs)
+      summarizer.send(:build_discovery_prompt, **kwargs)
+    end
+
+    let(:base_args) do
+      {
+        task_name:            "Research caching strategy",
+        existing_description: "",
+        your_transcript:      "We don't know which layer to cache at.",
+        others_transcript:    "Should we use Redis or Memcached?"
+      }
+    end
+
+    it "includes the task name" do
+      expect(prompt(**base_args)).to include("Research caching strategy")
+    end
+
+    it "includes Open Questions section header" do
+      expect(prompt(**base_args)).to include("## Open Questions")
+    end
+
+    it "includes Next Steps section header" do
+      expect(prompt(**base_args)).to include("## Next Steps")
+    end
+
+    it "includes Context & Background section header" do
+      expect(prompt(**base_args)).to include("## Context & Background")
+    end
+
+    it "does not mention Requirements as the focus" do
+      expect(prompt(**base_args)).not_to include("## Requirements")
+    end
+
+    it "labels your transcript as microphone contributions" do
+      expect(prompt(**base_args)).to include("YOUR CONTRIBUTIONS (microphone):")
+    end
+
+    it "labels others' transcript as system audio contributions" do
+      expect(prompt(**base_args)).to include("OTHERS IN THE MEETING (system audio):")
+    end
+
+    it "uses mic-only phrasing when others_transcript is nil" do
+      args = base_args.merge(others_transcript: nil)
+      expect(prompt(**args)).to include("microphone only")
+      expect(prompt(**args)).not_to include("OTHERS IN THE MEETING")
+    end
+
+    it "uses system-audio-only phrasing when your_transcript is nil" do
+      args = base_args.merge(your_transcript: nil, others_transcript: "Others spoke")
+      expect(prompt(**args)).to include("system audio only")
+      expect(prompt(**args)).not_to include("YOUR CONTRIBUTIONS")
+    end
+
+    it "shows a placeholder when existing description is empty" do
+      expect(prompt(**base_args)).to include("no existing description")
+    end
+
+    it "strips HTML tags from the existing description" do
+      args = base_args.merge(existing_description: "<body><h1>Old context</h1></body>")
+      result = prompt(**args)
+      expect(result).to include("Old context")
+      expect(result).not_to include("<h1>")
+    end
+  end
+
   # ── #summarize ─────────────────────────────────────────────────────────────
 
   describe "#summarize" do
@@ -192,7 +255,7 @@ RSpec.describe AsanaWhisperer::Summarizer do
         your_transcript: "a", others_transcript: "b"
       )
 
-      expect(result[:html]).to include("<h3>Requirements</h3>")
+      expect(result[:html]).to include("<strong>Requirements</strong>")
       expect(result[:html]).to include("<li>Do the thing</li>")
     end
 
@@ -224,6 +287,102 @@ RSpec.describe AsanaWhisperer::Summarizer do
           your_transcript: "a", others_transcript: nil
         )
       }.to raise_error(/Anthropic API error.*Rate limit exceeded/)
+    end
+
+    context "with mode: :requirements (default)" do
+      it "uses the requirements prompt (mentions Requirements section)" do
+        captured_prompt = nil
+        allow(mock_http).to receive(:request) do |req|
+          captured_prompt = JSON.parse(req.body).dig("messages", 0, "content")
+          api_response(claude_text)
+        end
+
+        summarizer.summarize(
+          task_name: "X", existing_description: "",
+          your_transcript: "a", others_transcript: "b"
+        )
+
+        expect(captured_prompt).to include("requirements")
+      end
+
+      it "defaults to requirements mode when mode is not specified" do
+        captured_prompt = nil
+        allow(mock_http).to receive(:request) do |req|
+          captured_prompt = JSON.parse(req.body).dig("messages", 0, "content")
+          api_response(claude_text)
+        end
+
+        summarizer.summarize(
+          task_name: "X", existing_description: "",
+          your_transcript: "a", others_transcript: "b"
+        )
+
+        expect(captured_prompt).to include("requirements")
+        expect(captured_prompt).not_to include("Open Questions")
+      end
+    end
+
+    context "with mode: :discovery" do
+      let(:discovery_text) do
+        "## Open Questions\n- Who owns this?\n\n## Next Steps\n- Set up a spike"
+      end
+
+      it "uses the discovery prompt (mentions open questions)" do
+        captured_prompt = nil
+        allow(mock_http).to receive(:request) do |req|
+          captured_prompt = JSON.parse(req.body).dig("messages", 0, "content")
+          api_response(discovery_text)
+        end
+
+        summarizer.summarize(
+          task_name: "X", existing_description: "",
+          your_transcript: "a", others_transcript: "b",
+          mode: :discovery
+        )
+
+        expect(captured_prompt).to include("Open Questions")
+      end
+
+      it "does not use the requirements prompt when in discovery mode" do
+        captured_prompt = nil
+        allow(mock_http).to receive(:request) do |req|
+          captured_prompt = JSON.parse(req.body).dig("messages", 0, "content")
+          api_response(discovery_text)
+        end
+
+        summarizer.summarize(
+          task_name: "X", existing_description: "",
+          your_transcript: "a", others_transcript: "b",
+          mode: :discovery
+        )
+
+        expect(captured_prompt).not_to include("acceptance criteria")
+      end
+
+      it "returns both :plain and :html" do
+        allow(mock_http).to receive(:request).and_return(api_response(discovery_text))
+
+        result = summarizer.summarize(
+          task_name: "X", existing_description: "",
+          your_transcript: "a", others_transcript: "b",
+          mode: :discovery
+        )
+
+        expect(result).to have_key(:plain)
+        expect(result).to have_key(:html)
+      end
+
+      it "returns the raw Claude text as :plain" do
+        allow(mock_http).to receive(:request).and_return(api_response(discovery_text))
+
+        result = summarizer.summarize(
+          task_name: "X", existing_description: "",
+          your_transcript: "a", others_transcript: "b",
+          mode: :discovery
+        )
+
+        expect(result[:plain]).to eq(discovery_text)
+      end
     end
   end
 end

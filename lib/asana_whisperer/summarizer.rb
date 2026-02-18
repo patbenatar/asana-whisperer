@@ -13,8 +13,9 @@ module AsanaWhisperer
     end
 
     # Returns { html: String, plain: String }
-    def summarize(task_name:, existing_description:, your_transcript:, others_transcript:)
-      prompt = build_prompt(
+    def summarize(task_name:, existing_description:, your_transcript:, others_transcript:, mode: :requirements)
+      builder = mode == :discovery ? :build_discovery_prompt : :build_prompt
+      prompt = send(builder,
         task_name:            task_name,
         existing_description: existing_description,
         your_transcript:      your_transcript,
@@ -82,6 +83,66 @@ module AsanaWhisperer
         - [This section is rarely needed — most discussions produce only requirements]
 
         IMPORTANT: Keep the output minimal. Do not pad with filler. Do not restate anything already in the ticket or in the Requirements section. If the transcript is unclear or garbled, skip those parts. Omit the Key Context section if it would be redundant.
+      PROMPT
+    end
+
+    def build_discovery_prompt(task_name:, existing_description:, your_transcript:, others_transcript:)
+      desc_section = existing_description.to_s.empty? ?
+        "(no existing description)" :
+        existing_description.gsub(/<[^>]+>/, " ").squeeze(" ").strip[0, 2000]
+
+      has_your   = your_transcript   && !your_transcript.strip.empty?
+      has_others = others_transcript && !others_transcript.strip.empty?
+
+      transcript_section = if has_your && has_others
+        <<~TEXT
+          YOUR CONTRIBUTIONS (microphone):
+          #{your_transcript.strip}
+
+          OTHERS IN THE MEETING (system audio):
+          #{others_transcript.strip}
+        TEXT
+      elsif has_your
+        <<~TEXT
+          MEETING TRANSCRIPT (microphone only — system audio was not captured):
+          #{your_transcript.strip}
+        TEXT
+      else
+        <<~TEXT
+          MEETING TRANSCRIPT (system audio only — microphone was not captured):
+          #{others_transcript.strip}
+        TEXT
+      end
+
+      <<~PROMPT
+        You are capturing notes from a product discovery conversation. The team was exploring a ticket, discussing open questions, unknowns, and what needs to be figured out before work can proceed.
+
+        TICKET NAME: #{task_name}
+
+        EXISTING TICKET DESCRIPTION (for context — do not repeat what's already captured here):
+        #{desc_section}
+
+        MEETING DISCUSSION:
+        #{transcript_section}
+
+        Your task is to surface the key discovery outputs from this conversation. Focus on what was explored and what remains uncertain — not on definitive conclusions or implementation details.
+
+        Produce a concise summary in plain text using this exact format. Omit any section that has nothing meaningful to add:
+
+        ## Open Questions
+        - [Unresolved questions where no clear next step was identified]
+        - ONLY include a question here if there is no obvious action to answer it
+
+        ## Context & Background
+        - [Relevant context, constraints, or assumptions surfaced in the conversation]
+        - [Dependencies or external factors that shape this work]
+
+        ## Next Steps
+        - [Concrete actions, research tasks, or conversations that need to happen — include owner if mentioned]
+
+        CRITICAL DEDUPLICATION RULE: A question and its corresponding action are the same item — never list both. If the discussion produced a clear next step to answer a question (e.g. "ask a stakeholder whether X is true"), put it only under Next Steps and omit it from Open Questions entirely. Only put something under Open Questions if there is genuinely no known next step to resolve it.
+
+        IMPORTANT: Keep output concise. Do not invent conclusions that were not stated. Do not restate anything already in the ticket description. Skip any section that has no meaningful content from the transcript.
       PROMPT
     end
 

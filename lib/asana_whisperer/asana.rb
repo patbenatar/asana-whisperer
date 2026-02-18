@@ -33,6 +33,11 @@ module AsanaWhisperer
       data["data"]
     end
 
+    def add_comment(task_gid, html)
+      response = post("/tasks/#{task_gid}/stories", { html_text: "<body>#{html}</body>" })
+      parse_response!(response, "add comment")
+    end
+
     def prepend_to_task(task_gid, prepend_html, existing_html_notes)
       # Strip outer <body>...</body> from existing content if present
       inner = strip_body_tags(existing_html_notes.to_s)
@@ -55,6 +60,16 @@ module AsanaWhisperer
       request = Net::HTTP::Get.new(uri)
       request["Authorization"] = "Bearer #{@access_token}"
       request["Accept"]        = "application/json"
+      execute(uri, request)
+    end
+
+    def post(path, body)
+      uri = URI("#{BASE_URL}#{path}")
+      request = Net::HTTP::Post.new(uri)
+      request["Authorization"] = "Bearer #{@access_token}"
+      request["Content-Type"]  = "application/json"
+      request["Accept"]        = "application/json"
+      request.body = JSON.generate({ data: body })
       execute(uri, request)
     end
 

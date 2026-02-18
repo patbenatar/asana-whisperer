@@ -11,7 +11,10 @@ module AsanaWhisperer
     end
 
     def run(argv)
-      url = argv.first&.strip
+      args = argv.dup
+      mode = args.delete("--discover") || args.delete("-d") ? :discovery : :requirements
+
+      url = args.first&.strip
 
       if url.nil? || url.empty? || url.start_with?("-")
         abort usage
@@ -31,6 +34,7 @@ module AsanaWhisperer
       puts "  Ticket : #{task["name"]}"
       project_name = task.dig("projects", 0, "name")
       puts "  Project: #{project_name}" if project_name
+      puts "  Mode   : #{mode == :discovery ? "Discovery" : "Requirements"}"
       puts
 
       # ── 2. Detect audio sources ────────────────────────────────────────────
@@ -141,7 +145,8 @@ module AsanaWhisperer
         task_name:            task["name"],
         existing_description: task["html_notes"] || task["notes"],
         your_transcript:      your_transcript,
-        others_transcript:    others_transcript
+        others_transcript:    others_transcript,
+        mode:                 mode
       )
       puts "done"
       puts
@@ -152,8 +157,13 @@ module AsanaWhisperer
       puts
 
       # ── 7. Update Asana ────────────────────────────────────────────────────
-      print "Updating Asana ticket... "
-      asana.prepend_to_task(task_gid, result[:html], task["html_notes"])
+      if mode == :discovery
+        print "Adding comment to Asana ticket... "
+        asana.add_comment(task_gid, result[:html])
+      else
+        print "Updating Asana ticket... "
+        asana.prepend_to_task(task_gid, result[:html], task["html_notes"])
+      end
       puts "done"
       puts
       puts "Updated: #{task["permalink_url"] || url}"
@@ -201,15 +211,21 @@ module AsanaWhisperer
 
     def usage
       <<~USAGE
-        Usage: asana-whisperer <asana-task-url>
+        Usage: asana-whisperer [--discover] <asana-task-url>
+
+        Options:
+          --discover, -d   Discovery mode: surfaces open questions, context, and next
+                           steps, then adds a comment to the ticket (default: Requirements
+                           mode, which extracts concrete requirements and prepends them to
+                           the ticket description)
 
         Examples:
           asana-whisperer https://app.asana.com/0/123456/789012
-          asana-whisperer https://app.asana.com/1/ws/project/123/task/456
+          asana-whisperer --discover https://app.asana.com/1/ws/project/123/task/456
 
         Starts recording your microphone (and system audio if available),
         then on Enter/Ctrl+C transcribes and summarizes the discussion
-        into requirements prepended to the Asana ticket.
+        into the Asana ticket.
 
         Required environment variables (set in .env):
           OPENAI_API_KEY       — OpenAI API key (for Whisper transcription)

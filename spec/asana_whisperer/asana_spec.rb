@@ -80,6 +80,48 @@ RSpec.describe AsanaWhisperer::Asana do
     end
   end
 
+  # ── #add_comment ───────────────────────────────────────────────────────────
+
+  describe "#add_comment" do
+    let(:ok) { success_response({ "data" => { "gid" => "story-1" } }) }
+
+    it "posts to the task stories endpoint" do
+      allow(mock_http).to receive(:request) do |req|
+        expect(req.path).to include("/tasks/123/stories")
+        ok
+      end
+
+      client.add_comment("123", "<strong>Discovery</strong>")
+    end
+
+    it "sends the comment as html_text wrapped in a body tag" do
+      allow(mock_http).to receive(:request) do |req|
+        html_text = JSON.parse(req.body).dig("data", "html_text")
+        expect(html_text).to eq("<body><strong>Discovery</strong></body>")
+        ok
+      end
+
+      client.add_comment("123", "<strong>Discovery</strong>")
+    end
+
+    it "uses the POST method" do
+      allow(mock_http).to receive(:request) do |req|
+        expect(req).to be_a(Net::HTTP::Post)
+        ok
+      end
+
+      client.add_comment("123", "Some text")
+    end
+
+    it "raises on HTTP failure" do
+      allow(mock_http).to receive(:request)
+        .and_return(error_response(403, "Forbidden"))
+
+      expect { client.add_comment("123", "text") }
+        .to raise_error(/Asana API error.*Forbidden/)
+    end
+  end
+
   # ── #prepend_to_task ───────────────────────────────────────────────────────
 
   describe "#prepend_to_task" do
@@ -106,10 +148,10 @@ RSpec.describe AsanaWhisperer::Asana do
       client.prepend_to_task("123", "<h2>New</h2>", "<body><p>Old</p></body>")
     end
 
-    it "adds an <hr/> divider between new and existing content" do
+    it "adds a text divider between new and existing content" do
       allow(mock_http).to receive(:request) do |req|
         html = JSON.parse(req.body).dig("data", "html_notes")
-        expect(html).to include("<hr/>")
+        expect(html).to include("────────────────────────────────────────")
         ok
       end
 
