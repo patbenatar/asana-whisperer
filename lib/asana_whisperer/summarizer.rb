@@ -62,28 +62,26 @@ module AsanaWhisperer
 
         TICKET NAME: #{task_name}
 
-        EXISTING TICKET DESCRIPTION:
+        EXISTING TICKET DESCRIPTION (for reference only — do not repeat what's already captured here):
         #{desc_section}
 
         MEETING DISCUSSION:
         #{transcript_section}
 
-        Your task is to extract the final, agreed-upon outcome of this discussion. Ignore tangents, small talk, and anything not directly relevant to the ticket.
+        Your task is to extract only the NEW requirements and decisions from the meeting discussion. Focus entirely on what was said in the transcript, not on restating what's already in the ticket description.
 
         Produce a clear, structured summary in plain text using this exact format:
 
         ## Requirements
-        - [Each concrete, agreed-upon requirement as a bullet point]
+        - [Each concrete requirement or decision from the discussion as a bullet point]
         - [Be specific and actionable — write them as acceptance criteria when possible]
+        - [Only include requirements explicitly stated or agreed upon in the transcript]
 
         ## Key Context & Background
-        - [Important context, constraints, edge cases, or technical considerations raised]
-        - [Decisions made and the reasoning behind them]
+        - [OMIT THIS SECTION ENTIRELY unless there is critical context that: (1) does NOT fit as a requirement, (2) is NOT already in the existing ticket description, AND (3) is NOT redundant with anything in the Requirements section above]
+        - [This section is rarely needed — most discussions produce only requirements]
 
-        ## Open Questions
-        - [Any unresolved questions or follow-up items, or write "None" if everything was resolved]
-
-        Keep requirements crisp and unambiguous. If something was discussed but not agreed upon, put it in Open Questions. Do not pad with filler.
+        IMPORTANT: Keep the output minimal. Do not pad with filler. Do not restate anything already in the ticket or in the Requirements section. If the transcript is unclear or garbled, skip those parts. Omit the Key Context section if it would be redundant.
       PROMPT
     end
 
@@ -111,14 +109,11 @@ module AsanaWhisperer
     end
 
     # Convert the plain-text markdown-like output into Asana-compatible HTML
+    # Note: Asana does NOT support <p>, <br>, or <hr> tags - use newlines instead
     def plain_to_html(text)
-      date_str = Time.now.strftime("%B %-d, %Y at %-I:%M %p")
       lines    = text.strip.lines.map(&:rstrip)
       html     = []
       in_list  = false
-
-      html << "<h2>Meeting Requirements Summary</h2>"
-      html << "<p><em>Captured #{date_str} via asana-whisperer</em></p>"
 
       lines.each do |line|
         if line.start_with?("## ")
@@ -126,7 +121,7 @@ module AsanaWhisperer
             html << "</ul>"
             in_list = false
           end
-          html << "<h3>#{escape_html(line[3..].strip)}</h3>"
+          html << "<strong>#{escape_html(line[3..].strip)}</strong>"
         elsif line.start_with?("- ")
           unless in_list
             html << "<ul>"
@@ -138,7 +133,7 @@ module AsanaWhisperer
             html << "</ul>"
             in_list = false
           end
-          html << "<p>#{escape_html(line)}</p>" unless line.empty?
+          html << escape_html(line) unless line.empty?
         end
       end
 
@@ -147,10 +142,14 @@ module AsanaWhisperer
     end
 
     def escape_html(str)
-      str.gsub("&", "&amp;")
-         .gsub("<", "&lt;")
-         .gsub(">", "&gt;")
-         .gsub('"', "&quot;")
+      # Ensure valid UTF-8 and strip control characters (except newlines/tabs)
+      sanitized = str.encode("UTF-8", invalid: :replace, undef: :replace, replace: "")
+                     .gsub(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/, "")
+
+      # Escape HTML entities (only the essential ones for text content)
+      sanitized.gsub("&", "&amp;")
+               .gsub("<", "&lt;")
+               .gsub(">", "&gt;")
     end
   end
 end

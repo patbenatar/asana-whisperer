@@ -37,7 +37,8 @@ module AsanaWhisperer
       # Strip outer <body>...</body> from existing content if present
       inner = strip_body_tags(existing_html_notes.to_s)
 
-      divider = inner.empty? ? "" : "\n<hr/>\n"
+      # Asana doesn't support <hr>, use a text divider instead
+      divider = inner.empty? ? "" : "\n\n────────────────────────────────────────\n\n"
       new_html = "<body>#{prepend_html}#{divider}#{inner}</body>"
 
       response = put("/tasks/#{task_gid}", { html_notes: new_html })

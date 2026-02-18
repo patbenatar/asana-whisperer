@@ -129,7 +129,7 @@ module AsanaWhisperer
         "-ar", SAMPLE_RATE, "-ac", CHANNELS,
         "-codec:a", "libmp3lame", "-b:a", BITRATE,
         output_path,
-        out: "/dev/null", err: log_path
+        in: "/dev/null", out: "/dev/null", err: log_path
       )
     end
   end
