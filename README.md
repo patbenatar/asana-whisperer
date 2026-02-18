@@ -34,6 +34,10 @@ pactl list sources short
 
 You should see two sources — one for your mic (`RDPSource`) and one for system audio (`RDPSink.monitor`). Both will be `SUSPENDED` until recording starts; that's normal.
 
+**How WSL2 audio works:** WSLg (the GUI layer included with WSL2) bridges Windows audio into the Linux environment via an RDP audio channel. `RDPSink` represents your Windows audio output, and `RDPSink.monitor` is a loopback of everything playing on Windows — meaning any audio from Google Meet, a browser, or any other Windows app will be captured automatically. You don't need a virtual audio cable.
+
+If you don't see `RDPSink.monitor`, run `wsl --update` in a Windows terminal and restart WSL. WSLg requires WSL version 2.0+, which ships with Windows 11 and is available on Windows 10 via Windows Update.
+
 ### 2. Add user gem bin to your PATH
 
 The system Ruby gem directory isn't user-writable, so gems install to your home directory. Add this to your `~/.zshrc` (or `~/.bashrc`):
@@ -127,10 +131,10 @@ Unset or remove `ANTHROPIC_API_KEY` — it's no longer required.
 [faster-whisper-server](https://github.com/fedirz/faster-whisper-server) runs Whisper locally with an OpenAI-compatible API (same `/v1/audio/transcriptions` endpoint).
 
 ```bash
-# Requires Python 3.9+ and pip
-pip install faster-whisper-server
+# Install uv (fast Python package manager — provides the uvx command)
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Start the server (downloads the model on first run)
+# Start the server (downloads faster-whisper-server and the model on first run)
 uvx faster-whisper-server
 ```
 
