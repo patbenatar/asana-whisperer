@@ -139,7 +139,8 @@ module AsanaWhisperer
       end
 
       # ── 6. Summarize ──────────────────────────────────────────────────────
-      print "Summarizing with Claude... "
+      llm_label = ENV["LLM_MODEL"] || (ENV["LLM_API_URL"] ? "local LLM" : "Claude")
+      print "Summarizing with #{llm_label}... "
       summarizer = Summarizer.new(ENV["ANTHROPIC_API_KEY"])
       result = summarizer.summarize(
         task_name:            task["name"],
@@ -178,11 +179,16 @@ module AsanaWhisperer
     private
 
     def validate_env!
-      missing = %w[OPENAI_API_KEY ANTHROPIC_API_KEY ASANA_ACCESS_TOKEN].reject { |k| ENV[k]&.match?(/\S/) }
+      required = ["ASANA_ACCESS_TOKEN"]
+      required << "OPENAI_API_KEY"    unless ENV["WHISPER_API_URL"]&.match?(/\S/)
+      required << "ANTHROPIC_API_KEY" unless ENV["LLM_API_URL"]&.match?(/\S/)
+
+      missing = required.reject { |k| ENV[k]&.match?(/\S/) }
       return if missing.empty?
 
       abort "Missing required environment variables: #{missing.join(", ")}\n" \
-            "Copy .env.example to .env and fill in your API keys."
+            "Copy .env.example to .env and fill in your API keys.\n" \
+            "To use local models instead, set WHISPER_API_URL and LLM_API_URL in .env."
     end
 
     def warn_stream_failed(audio, key)

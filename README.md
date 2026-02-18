@@ -12,8 +12,8 @@ Two modes:
 1. Run the tool with an Asana task URL (and optionally `--discover`)
 2. It records your microphone and system audio (Google Meet participants) as two separate streams
 3. Press **Enter** or **Ctrl+C** to stop
-4. Both streams are transcribed via OpenAI Whisper (`gpt-4o-mini-transcribe`)
-5. Claude analyzes the discussion using the prompt for the active mode
+4. Both streams are transcribed via OpenAI Whisper (`gpt-4o-mini-transcribe`) or a local Whisper server
+5. An LLM (Claude by default, or a local model via Ollama) analyzes the discussion using the prompt for the active mode
 6. The summary is written back to the Asana ticket (prepended to the description in Requirements mode, posted as a comment in Discovery mode)
 
 ---
@@ -58,13 +58,15 @@ bundle install
 cp .env.example .env
 ```
 
-Edit `.env` and fill in all three keys:
+Edit `.env` and fill in the keys you need:
 
-| Variable | Where to get it |
-|---|---|
-| `OPENAI_API_KEY` | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
-| `ANTHROPIC_API_KEY` | [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys) |
-| `ASANA_ACCESS_TOKEN` | app.asana.com/0/my-apps → Personal Access Tokens |
+| Variable | Required | Where to get it |
+|---|---|---|
+| `OPENAI_API_KEY` | Unless using a local Whisper server | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
+| `ANTHROPIC_API_KEY` | Unless using a local LLM | [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys) |
+| `ASANA_ACCESS_TOKEN` | Always | app.asana.com/0/my-apps → Personal Access Tokens |
+
+See [Local models](#local-models-optional) below to skip both cloud API keys entirely.
 
 ### 5. Make it available as `aw` from anywhere
 
@@ -78,6 +80,78 @@ Make sure `~/.local/bin` is in your PATH (add to `~/.zshrc` if not):
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
+
+---
+
+## Local models (optional)
+
+Both the transcription and summarization steps can run locally instead of hitting the cloud APIs. Benefits: faster round-trips (no network), no per-request cost, offline operation, and privacy.
+
+Each service is configured independently — you can run one locally and keep the other on the cloud.
+
+### LLM summarization via Ollama
+
+[Ollama](https://ollama.com) runs LLMs locally and exposes an OpenAI-compatible API.
+
+```bash
+# Install Ollama (Linux / WSL2)
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Pull a model — llama3.2 is a good starting point (~2 GB)
+ollama pull llama3.2
+
+# Ollama starts automatically; verify it's running
+curl http://localhost:11434/api/tags
+```
+
+Add to `.env`:
+
+```
+LLM_API_URL=http://localhost:11434/v1/chat/completions
+LLM_PROVIDER=openai
+LLM_MODEL=llama3.2
+```
+
+Unset or remove `ANTHROPIC_API_KEY` — it's no longer required.
+
+**Model recommendations:**
+
+| Model | Size | Notes |
+|---|---|---|
+| `llama3.2` | ~2 GB | Good default, fast |
+| `qwen2.5:7b` | ~4.7 GB | High quality structured output |
+| `mistral` | ~4.1 GB | Good balance of speed and quality |
+
+### Transcription via faster-whisper-server
+
+[faster-whisper-server](https://github.com/fedirz/faster-whisper-server) runs Whisper locally with an OpenAI-compatible API (same `/v1/audio/transcriptions` endpoint).
+
+```bash
+# Requires Python 3.9+ and pip
+pip install faster-whisper-server
+
+# Start the server (downloads the model on first run)
+uvx faster-whisper-server
+```
+
+Add to `.env`:
+
+```
+WHISPER_API_URL=http://localhost:8000/v1/audio/transcriptions
+WHISPER_MODEL=Systran/faster-whisper-large-v3
+```
+
+Unset or remove `OPENAI_API_KEY` — it's no longer required.
+
+**Model recommendations:**
+
+| Model | Accuracy | Speed | Notes |
+|---|---|---|---|
+| `Systran/faster-whisper-base` | Low | Very fast | Good for testing |
+| `Systran/faster-whisper-medium` | Medium | Fast | Decent quality |
+| `Systran/faster-whisper-large-v3` | High | Slower | Best accuracy |
+
+> **WSL2 GPU note:** faster-whisper will use CPU by default. For GPU acceleration, ensure CUDA is configured in WSL2 (`nvidia-smi` should work). Pass `--device cuda` to the server.
 
 ---
 
@@ -145,7 +219,9 @@ Updated: https://app.asana.com/0/123/456
 
 ## Cost estimate
 
-60-minute meeting:
+Cloud APIs, 60-minute meeting:
 - Transcription: ~$0.36 (120 min audio × $0.003/min)
 - Summarization: ~$0.10–$0.15 (Claude Sonnet)
 - **Total: under $0.55 per meeting**
+
+With local models (Ollama + faster-whisper-server): **$0.00 per meeting**

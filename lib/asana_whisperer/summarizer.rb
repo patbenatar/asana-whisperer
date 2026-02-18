@@ -5,11 +5,21 @@ require "json"
 module AsanaWhisperer
   class Summarizer
     ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
-    MODEL             = "claude-sonnet-4-6"
     MAX_TOKENS        = 4096
 
+    # Local model support via environment variables:
+    #
+    #   LLM_API_URL   — API endpoint (default: Anthropic cloud)
+    #                   Local Ollama: http://localhost:11434/v1/chat/completions
+    #   LLM_PROVIDER  — "anthropic" (default) or "openai" (Ollama / any OpenAI-compatible server)
+    #   LLM_MODEL     — Model name (default: claude-sonnet-4-6)
+    #                   Ollama examples: llama3.2, qwen2.5:7b, mistral
+
     def initialize(api_key)
-      @api_key = api_key
+      @api_key  = api_key
+      @api_url  = ENV.fetch("LLM_API_URL", ANTHROPIC_API_URL)
+      @model    = ENV.fetch("LLM_MODEL", "claude-sonnet-4-6")
+      @provider = ENV.fetch("LLM_PROVIDER", "anthropic")
     end
 
     # Returns { html: String, plain: String }
@@ -147,26 +157,44 @@ module AsanaWhisperer
     end
 
     def call_api(prompt)
-      uri = URI(ANTHROPIC_API_URL)
+      uri = URI(@api_url)
       req = Net::HTTP::Post.new(uri)
-      req["x-api-key"]         = @api_key
-      req["anthropic-version"] = "2023-06-01"
-      req["content-type"]      = "application/json"
-      req.body = JSON.generate({
-        model:      MODEL,
-        max_tokens: MAX_TOKENS,
-        messages: [{ role: "user", content: prompt }]
-      })
+      req["content-type"] = "application/json"
 
-      response = Net::HTTP.start(uri.host, uri.port, use_ssl: true) { |h| h.request(req) }
+      if @provider == "openai"
+        # OpenAI-compatible format: Ollama, LM Studio, LocalAI, etc.
+        req["Authorization"] = "Bearer #{@api_key || "ollama"}"
+        req.body = JSON.generate({
+          model:      @model,
+          max_tokens: MAX_TOKENS,
+          messages:   [{ role: "user", content: prompt }]
+        })
+      else
+        # Anthropic format
+        req["x-api-key"]         = @api_key
+        req["anthropic-version"] = "2023-06-01"
+        req.body = JSON.generate({
+          model:      @model,
+          max_tokens: MAX_TOKENS,
+          messages:   [{ role: "user", content: prompt }]
+        })
+      end
+
+      use_ssl = uri.scheme == "https"
+      response = Net::HTTP.start(uri.host, uri.port, use_ssl: use_ssl) { |h| h.request(req) }
 
       unless response.is_a?(Net::HTTPSuccess)
         body = JSON.parse(response.body) rescue {}
-        raise "Anthropic API error: HTTP #{response.code} — #{body.dig("error", "message") || response.body}"
+        raise "LLM API error: HTTP #{response.code} — #{body.dig("error", "message") || response.body}"
       end
 
       data = JSON.parse(response.body)
-      data.dig("content", 0, "text") or raise "Unexpected Anthropic response: #{data.inspect}"
+
+      if @provider == "openai"
+        data.dig("choices", 0, "message", "content") or raise "Unexpected OpenAI response: #{data.inspect}"
+      else
+        data.dig("content", 0, "text") or raise "Unexpected Anthropic response: #{data.inspect}"
+      end
     end
 
     # Convert the plain-text markdown-like output into Asana-compatible HTML

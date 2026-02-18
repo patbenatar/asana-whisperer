@@ -5,12 +5,22 @@ require "securerandom"
 
 module AsanaWhisperer
   class Transcriber
-    WHISPER_URL    = "https://api.openai.com/v1/audio/transcriptions"
-    MODEL          = "gpt-4o-mini-transcribe"
-    MAX_SIZE_BYTES = 24 * 1024 * 1024  # 24 MB safety margin (API limit is 25 MB)
+    OPENAI_WHISPER_URL = "https://api.openai.com/v1/audio/transcriptions"
+    MAX_SIZE_BYTES     = 24 * 1024 * 1024  # 24 MB safety margin (API limit is 25 MB)
+
+    # Local model support via environment variables:
+    #
+    #   WHISPER_API_URL — API endpoint (default: OpenAI cloud)
+    #                     faster-whisper-server: http://localhost:8000/v1/audio/transcriptions
+    #                     LocalAI:               http://localhost:8080/v1/audio/transcriptions
+    #   WHISPER_MODEL   — Model name (default: gpt-4o-mini-transcribe)
+    #                     faster-whisper: Systran/faster-whisper-base, ...medium, ...large-v3
+    #                     LocalAI/whisper.cpp: whisper-1, base, medium, large
 
     def initialize(api_key)
-      @api_key = api_key
+      @api_key  = api_key
+      @api_url  = ENV.fetch("WHISPER_API_URL", OPENAI_WHISPER_URL)
+      @model    = ENV.fetch("WHISPER_MODEL", "gpt-4o-mini-transcribe")
     end
 
     # Returns transcript text, or nil if the file is missing/too small.
@@ -27,13 +37,13 @@ module AsanaWhisperer
     private
 
     def call_whisper(file_path, language:)
-      uri      = URI(WHISPER_URL)
+      uri      = URI(@api_url)
       boundary = SecureRandom.hex(16)
 
       body = build_multipart_body(
         boundary: boundary,
         fields: {
-          "model"    => MODEL,
+          "model"    => @model,
           "language" => language,
         },
         file_path: file_path,
@@ -41,19 +51,20 @@ module AsanaWhisperer
       )
 
       req = Net::HTTP::Post.new(uri)
-      req["Authorization"]  = "Bearer #{@api_key}"
+      req["Authorization"]  = "Bearer #{@api_key}" if @api_key&.match?(/\S/)
       req["Content-Type"]   = "multipart/form-data; boundary=#{boundary}"
       req["Accept"]         = "application/json"
       req.body              = body
 
-      response = Net::HTTP.start(uri.host, uri.port, use_ssl: true,
+      use_ssl = uri.scheme == "https"
+      response = Net::HTTP.start(uri.host, uri.port, use_ssl: use_ssl,
                                  read_timeout: 300, open_timeout: 30) do |http|
         http.request(req)
       end
 
       unless response.is_a?(Net::HTTPSuccess)
         data = JSON.parse(response.body) rescue {}
-        raise "OpenAI Whisper error: HTTP #{response.code} — " \
+        raise "Whisper API error: HTTP #{response.code} — " \
               "#{data.dig("error", "message") || response.body[0, 200]}"
       end
 
