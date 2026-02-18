@@ -1,15 +1,20 @@
 # asana-whisperer
 
-Paste an Asana ticket URL, discuss it in your planning meeting, press Enter — requirements get written back to the ticket automatically.
+Paste an Asana ticket URL, discuss it in your meeting, press Enter — the conversation gets summarized and written back to the ticket automatically.
+
+Two modes:
+
+- **Requirements** (default) — extracts concrete requirements and prepends them to the ticket description
+- **Discovery** (`--discover`) — surfaces open questions, context, and next steps, then posts the result as a comment on the ticket
 
 ## How it works
 
-1. Run the tool with an Asana task URL
+1. Run the tool with an Asana task URL (and optionally `--discover`)
 2. It records your microphone and system audio (Google Meet participants) as two separate streams
 3. Press **Enter** or **Ctrl+C** to stop
 4. Both streams are transcribed via OpenAI Whisper (`gpt-4o-mini-transcribe`)
-5. Claude analyzes the discussion and extracts agreed requirements, key context, and open questions
-6. The summary is prepended to the Asana ticket description
+5. Claude analyzes the discussion using the prompt for the active mode
+6. The summary is written back to the Asana ticket (prepended to the description in Requirements mode, posted as a comment in Discovery mode)
 
 ---
 
@@ -79,7 +84,11 @@ export PATH="$HOME/.local/bin:$PATH"
 ## Usage
 
 ```bash
+# Requirements mode (default) — extracts requirements, prepends to ticket description
 aw https://app.asana.com/0/PROJECT_ID/TASK_ID
+
+# Discovery mode — surfaces open questions and next steps, posts as a ticket comment
+aw --discover https://app.asana.com/0/PROJECT_ID/TASK_ID
 ```
 
 Paste the URL of the ticket you're about to discuss, start the meeting, then press **Enter** or **Ctrl+C** when the discussion is done.
@@ -93,6 +102,7 @@ Fetching ticket... done
 
   Ticket : Add OAuth login support
   Project: Engineering Backlog
+  Mode   : Requirements
 
 Detecting audio sources... done
   Microphone : RDPSource
