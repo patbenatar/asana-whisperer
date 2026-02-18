@@ -70,7 +70,7 @@ module AsanaWhisperer
     def file_size_mb(key)
       path = files[key]
       return 0 unless path && File.exist?(path)
-      (File.size(path) / 1_048_576.0).round(1)
+      (File.size(path) / 1_048_576.0).round(2)
     end
 
     def cleanup!
