@@ -153,6 +153,44 @@ Unset or remove `OPENAI_API_KEY` — it's no longer required.
 
 > **WSL2 GPU note:** faster-whisper will use CPU by default. For GPU acceleration, ensure CUDA is configured in WSL2 (`nvidia-smi` should work). Pass `--device cuda` to the server.
 
+### Running fully local
+
+To run the entire pipeline without any cloud API keys:
+
+**1. Start the services** (two terminal tabs, or add to a startup script):
+
+```bash
+# Terminal 1 — Ollama (LLM)
+ollama serve   # or it may already be running as a systemd service
+
+# Terminal 2 — faster-whisper-server (transcription)
+uvx faster-whisper-server
+```
+
+**2. Set `.env`:**
+
+```
+# Asana (still required)
+ASANA_ACCESS_TOKEN=...
+
+# Local transcription
+WHISPER_API_URL=http://localhost:8000/v1/audio/transcriptions
+WHISPER_MODEL=Systran/faster-whisper-large-v3
+
+# Local LLM
+LLM_API_URL=http://localhost:11434/v1/chat/completions
+LLM_PROVIDER=openai
+LLM_MODEL=llama3.2
+```
+
+`OPENAI_API_KEY` and `ANTHROPIC_API_KEY` can be removed entirely.
+
+**3. Run as normal:**
+
+```bash
+aw https://app.asana.com/0/PROJECT_ID/TASK_ID
+```
+
 ---
 
 ## Usage
