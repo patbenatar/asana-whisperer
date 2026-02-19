@@ -11,8 +11,9 @@ module AsanaWhisperer
     end
 
     def run(argv)
-      args = argv.dup
-      mode = args.delete("--discover") || args.delete("-d") ? :discovery : :requirements
+      args  = argv.dup
+      mode  = args.delete("--discover") || args.delete("-d") ? :discovery : :requirements
+      local = args.delete("--local")    || args.delete("-l")
 
       url = args.first&.strip
 
@@ -20,6 +21,7 @@ module AsanaWhisperer
         abort usage
       end
 
+      apply_local_defaults! if local
       validate_env!
 
       task_gid = Asana.parse_task_gid(url)
@@ -35,6 +37,7 @@ module AsanaWhisperer
       project_name = task.dig("projects", 0, "name")
       puts "  Project: #{project_name}" if project_name
       puts "  Mode   : #{mode == :discovery ? "Discovery" : "Requirements"}"
+      puts "  Backend: #{local ? "local (#{ENV["LLM_MODEL"]} / #{ENV["WHISPER_MODEL"]})" : "cloud"}"
       puts
 
       # ── 2. Detect audio sources ────────────────────────────────────────────
@@ -178,6 +181,14 @@ module AsanaWhisperer
 
     private
 
+    def apply_local_defaults!
+      ENV["WHISPER_API_URL"] ||= "http://localhost:8000/v1/audio/transcriptions"
+      ENV["WHISPER_MODEL"]   ||= "Systran/faster-whisper-large-v3"
+      ENV["LLM_API_URL"]     ||= "http://localhost:11434/v1/chat/completions"
+      ENV["LLM_PROVIDER"]    ||= "openai"
+      ENV["LLM_MODEL"]       ||= "llama3.2"
+    end
+
     def validate_env!
       required = ["ASANA_ACCESS_TOKEN"]
       required << "OPENAI_API_KEY"    unless ENV["WHISPER_API_URL"]&.match?(/\S/)
@@ -217,25 +228,31 @@ module AsanaWhisperer
 
     def usage
       <<~USAGE
-        Usage: asana-whisperer [--discover] <asana-task-url>
+        Usage: asana-whisperer [--discover] [--local] <asana-task-url>
 
         Options:
           --discover, -d   Discovery mode: surfaces open questions, context, and next
                            steps, then adds a comment to the ticket (default: Requirements
                            mode, which extracts concrete requirements and prepends them to
                            the ticket description)
+          --local, -l      Use local models instead of cloud APIs (requires Ollama and
+                           faster-whisper-server to be running). No API keys needed.
+                           Model defaults can be overridden via WHISPER_MODEL / LLM_MODEL
+                           in .env.
 
         Examples:
           asana-whisperer https://app.asana.com/0/123456/789012
           asana-whisperer --discover https://app.asana.com/1/ws/project/123/task/456
+          asana-whisperer --local https://app.asana.com/0/123456/789012
+          asana-whisperer --local --discover https://app.asana.com/0/123456/789012
 
         Starts recording your microphone (and system audio if available),
         then on Enter/Ctrl+C transcribes and summarizes the discussion
         into the Asana ticket.
 
         Required environment variables (set in .env):
-          OPENAI_API_KEY       — OpenAI API key (for Whisper transcription)
-          ANTHROPIC_API_KEY    — Anthropic API key (for Claude summarization)
+          OPENAI_API_KEY       — OpenAI API key (for Whisper transcription; not needed with --local)
+          ANTHROPIC_API_KEY    — Anthropic API key (for Claude summarization; not needed with --local)
           ASANA_ACCESS_TOKEN   — Asana personal access token
       USAGE
     end
