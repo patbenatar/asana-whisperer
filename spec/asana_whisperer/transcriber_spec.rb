@@ -121,7 +121,7 @@ RSpec.describe AsanaWhisperer::Transcriber do
       allow(mock_http).to receive(:request).and_return(response)
 
       expect { transcriber.transcribe(audio_file.path) }
-        .to raise_error(/OpenAI Whisper error.*Invalid API key/)
+        .to raise_error(/Whisper API error.*Invalid API key/)
     end
 
     it "returns nil for a missing file" do

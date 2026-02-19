@@ -11,8 +11,9 @@ module AsanaWhisperer
     end
 
     def run(argv)
-      args = argv.dup
-      mode = args.delete("--discover") || args.delete("-d") ? :discovery : :requirements
+      args  = argv.dup
+      mode  = args.delete("--discover") || args.delete("-d") ? :discovery : :requirements
+      local = args.delete("--local")    || args.delete("-l")
 
       url = args.first&.strip
 
@@ -20,7 +21,7 @@ module AsanaWhisperer
         abort usage
       end
 
-      validate_env!
+      validate_env!(local: local)
 
       task_gid = Asana.parse_task_gid(url)
       abort "Could not parse a task ID from that URL.\n#{usage}" unless task_gid
@@ -35,6 +36,7 @@ module AsanaWhisperer
       project_name = task.dig("projects", 0, "name")
       puts "  Project: #{project_name}" if project_name
       puts "  Mode   : #{mode == :discovery ? "Discovery" : "Requirements"}"
+      puts "  Backend: #{local ? "local" : "cloud"}"
       puts
 
       # ── 2. Detect audio sources ────────────────────────────────────────────
@@ -139,7 +141,8 @@ module AsanaWhisperer
       end
 
       # ── 6. Summarize ──────────────────────────────────────────────────────
-      print "Summarizing with Claude... "
+      llm_label = ENV["LLM_MODEL"] || (ENV["LLM_API_URL"] ? "local LLM" : "Claude")
+      print "Summarizing with #{llm_label}... "
       summarizer = Summarizer.new(ENV["ANTHROPIC_API_KEY"])
       result = summarizer.summarize(
         task_name:            task["name"],
@@ -177,12 +180,23 @@ module AsanaWhisperer
 
     private
 
-    def validate_env!
-      missing = %w[OPENAI_API_KEY ANTHROPIC_API_KEY ASANA_ACCESS_TOKEN].reject { |k| ENV[k]&.match?(/\S/) }
-      return if missing.empty?
+    def validate_env!(local:)
+      if local
+        required = %w[ASANA_ACCESS_TOKEN WHISPER_API_URL LLM_API_URL]
+        missing  = required.reject { |k| ENV[k]&.match?(/\S/) }
+        return if missing.empty?
 
-      abort "Missing required environment variables: #{missing.join(", ")}\n" \
-            "Copy .env.example to .env and fill in your API keys."
+        abort "Missing environment variables required for --local mode: #{missing.join(", ")}\n" \
+              "Set these in .env — see README for local model setup."
+      else
+        required = %w[ASANA_ACCESS_TOKEN OPENAI_API_KEY ANTHROPIC_API_KEY]
+        missing  = required.reject { |k| ENV[k]&.match?(/\S/) }
+        return if missing.empty?
+
+        abort "Missing required environment variables: #{missing.join(", ")}\n" \
+              "Copy .env.example to .env and fill in your API keys.\n" \
+              "To use local models instead, pass --local (and set WHISPER_API_URL and LLM_API_URL in .env)."
+      end
     end
 
     def warn_stream_failed(audio, key)
@@ -211,25 +225,31 @@ module AsanaWhisperer
 
     def usage
       <<~USAGE
-        Usage: asana-whisperer [--discover] <asana-task-url>
+        Usage: asana-whisperer [--discover] [--local] <asana-task-url>
 
         Options:
           --discover, -d   Discovery mode: surfaces open questions, context, and next
                            steps, then adds a comment to the ticket (default: Requirements
                            mode, which extracts concrete requirements and prepends them to
                            the ticket description)
+          --local, -l      Use local models instead of cloud APIs (requires Ollama and
+                           faster-whisper-server to be running). No API keys needed.
+                           Model defaults can be overridden via WHISPER_MODEL / LLM_MODEL
+                           in .env.
 
         Examples:
           asana-whisperer https://app.asana.com/0/123456/789012
           asana-whisperer --discover https://app.asana.com/1/ws/project/123/task/456
+          asana-whisperer --local https://app.asana.com/0/123456/789012
+          asana-whisperer --local --discover https://app.asana.com/0/123456/789012
 
         Starts recording your microphone (and system audio if available),
         then on Enter/Ctrl+C transcribes and summarizes the discussion
         into the Asana ticket.
 
         Required environment variables (set in .env):
-          OPENAI_API_KEY       — OpenAI API key (for Whisper transcription)
-          ANTHROPIC_API_KEY    — Anthropic API key (for Claude summarization)
+          OPENAI_API_KEY       — OpenAI API key (for Whisper transcription; not needed with --local)
+          ANTHROPIC_API_KEY    — Anthropic API key (for Claude summarization; not needed with --local)
           ASANA_ACCESS_TOKEN   — Asana personal access token
       USAGE
     end

@@ -286,7 +286,7 @@ RSpec.describe AsanaWhisperer::Summarizer do
           task_name: "X", existing_description: "",
           your_transcript: "a", others_transcript: nil
         )
-      }.to raise_error(/Anthropic API error.*Rate limit exceeded/)
+      }.to raise_error(/LLM API error.*Rate limit exceeded/)
     end
 
     context "with mode: :requirements (default)" do
