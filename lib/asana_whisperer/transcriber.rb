@@ -43,8 +43,9 @@ module AsanaWhisperer
       body = build_multipart_body(
         boundary: boundary,
         fields: {
-          "model"    => @model,
-          "language" => language,
+          "model"      => @model,        # OpenAI
+          "model_name" => @model,        # faster-whisper-server
+          "language"   => language,
         },
         file_path: file_path,
         file_field: "file"

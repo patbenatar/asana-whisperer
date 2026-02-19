@@ -7,6 +7,23 @@ Two modes:
 - **Requirements** (default) — extracts concrete requirements and prepends them to the ticket description
 - **Discovery** (`--discover`) — surfaces open questions, context, and next steps, then posts the result as a comment on the ticket
 
+## Quick start (local models)
+
+```bash
+# Terminal 1 — Whisper transcription
+source ~/faster-whisper-env/bin/activate && faster-whisper-server --config ~/whisper-config.yaml
+
+# Terminal 2 — Ollama LLM (if not already running)
+ollama serve
+
+# Terminal 3 — Run the tool
+aw https://app.asana.com/0/PROJECT_ID/TASK_ID
+```
+
+See [Local models](#local-models-optional) for initial setup.
+
+---
+
 ## How it works
 
 1. Run the tool with an Asana task URL (and optionally `--discover`)
@@ -130,19 +147,71 @@ Unset or remove `ANTHROPIC_API_KEY` — it's no longer required.
 
 [faster-whisper-server](https://github.com/fedirz/faster-whisper-server) runs Whisper locally with an OpenAI-compatible API (same `/v1/audio/transcriptions` endpoint).
 
-```bash
-# Install uv (fast Python package manager — provides the uvx command)
-curl -LsSf https://astral.sh/uv/install.sh | sh
+**1. Install uv and Python 3.12** (faster-whisper-server requires Python 3.11+):
 
-# Start the server (downloads faster-whisper-server and the model on first run)
-uvx faster-whisper-server
+```bash
+# Install uv (fast Python package manager)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source ~/.bashrc  # or restart your terminal
+
+# Install Python 3.12 via uv
+uv python install 3.12
 ```
 
-Add to `.env`:
+**2. Create a virtual environment and install:**
+
+```bash
+uv venv --python 3.12 ~/faster-whisper-env
+source ~/faster-whisper-env/bin/activate
+uv pip install faster-whisper-server
+```
+
+**3. Fix a packaging bug** (the package is missing a required file):
+
+```bash
+cat > ~/faster-whisper-env/lib/python3.12/site-packages/pyproject.toml << 'EOF'
+[project]
+name = "faster-whisper-server"
+version = "0.0.2"
+EOF
+```
+
+**4. Create a config file** (optional but recommended for CPU optimization):
+
+```bash
+cat > ~/whisper-config.yaml << 'EOF'
+models:
+  - name: default
+    path: Systran/faster-whisper-base
+    batch_size: 1
+    model_options:
+      device: cpu
+      cpu_threads: 12      # adjust to your CPU core count (use `nproc`)
+      compute_type: int8   # faster CPU inference
+    transcribe_options: {}
+    translate_options: {}
+EOF
+```
+
+**5. Start the server:**
+
+```bash
+source ~/faster-whisper-env/bin/activate
+
+# With config (recommended for CPU)
+faster-whisper-server --config ~/whisper-config.yaml
+
+# Or without config (simpler, auto-downloads model)
+faster-whisper-server Systran/faster-whisper-base
+```
+
+The first run downloads the model (~150 MB for base, ~3 GB for large-v3).
+
+**6. Add to `.env`:**
 
 ```
 WHISPER_API_URL=http://localhost:8000/v1/audio/transcriptions
-WHISPER_MODEL=Systran/faster-whisper-large-v3
+WHISPER_MODEL=default   # must match the 'name' field in config, or use full model path if no config
 ```
 
 Unset or remove `OPENAI_API_KEY` — it's no longer required.
@@ -151,11 +220,11 @@ Unset or remove `OPENAI_API_KEY` — it's no longer required.
 
 | Model | Accuracy | Speed | Notes |
 |---|---|---|---|
-| `Systran/faster-whisper-base` | Low | Very fast | Good for testing |
+| `Systran/faster-whisper-base` | Low | Very fast | Good for clear audio (~150 MB) |
 | `Systran/faster-whisper-medium` | Medium | Fast | Decent quality |
-| `Systran/faster-whisper-large-v3` | High | Slower | Best accuracy |
+| `Systran/faster-whisper-large-v3` | High | Slower | Best accuracy (~3 GB) |
 
-> **WSL2 GPU note:** faster-whisper will use CPU by default. For GPU acceleration, ensure CUDA is configured in WSL2 (`nvidia-smi` should work). Pass `--device cuda` to the server.
+> **GPU acceleration:** faster-whisper auto-detects CUDA (NVIDIA only). For WSL2, ensure your Windows NVIDIA driver is version 470.76+, then run `wsl --shutdown` from PowerShell and restart WSL. Verify with `nvidia-smi`. AMD GPUs are not supported.
 
 ### Running fully local
 
@@ -168,7 +237,8 @@ To run the entire pipeline without any cloud API keys:
 ollama serve   # or it may already be running as a systemd service
 
 # Terminal 2 — faster-whisper-server (transcription)
-uvx faster-whisper-server
+source ~/faster-whisper-env/bin/activate
+faster-whisper-server --config ~/whisper-config.yaml
 ```
 
 **2. Set `.env`:**
@@ -179,7 +249,7 @@ ASANA_ACCESS_TOKEN=...
 
 # Local transcription
 WHISPER_API_URL=http://localhost:8000/v1/audio/transcriptions
-WHISPER_MODEL=Systran/faster-whisper-large-v3
+WHISPER_MODEL=default
 
 # Local LLM
 LLM_API_URL=http://localhost:11434/v1/chat/completions
