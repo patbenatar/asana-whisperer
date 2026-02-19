@@ -7,7 +7,17 @@ Two modes:
 - **Requirements** (default) — extracts concrete requirements and prepends them to the ticket description
 - **Discovery** (`--discover`) — surfaces open questions, context, and next steps, then posts the result as a comment on the ticket
 
-## Quick start (local models)
+## Quick start — cloud
+
+Requires `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and `ASANA_ACCESS_TOKEN` in `.env`.
+
+```bash
+aw https://app.asana.com/0/PROJECT_ID/TASK_ID
+```
+
+## Quick start — local models
+
+Requires [initial setup](#local-models-optional). Once done, start the services and pass `--local`:
 
 ```bash
 # Terminal 1 — Whisper transcription
@@ -19,8 +29,6 @@ ollama serve
 # Terminal 3 — Run the tool
 aw --local https://app.asana.com/0/PROJECT_ID/TASK_ID
 ```
-
-See [Local models](#local-models-optional) for initial setup.
 
 ---
 
