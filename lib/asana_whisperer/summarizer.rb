@@ -135,24 +135,32 @@ module AsanaWhisperer
         MEETING DISCUSSION:
         #{transcript_section}
 
-        Your task is to surface the key discovery outputs from this conversation. Focus on what was explored and what remains uncertain — not on definitive conclusions or implementation details.
+        Your task is to surface the key discovery outputs from this conversation. Only include information that was explicitly discussed in the transcript. Do not generate your own questions, conclusions, or inferences.
 
-        Produce a concise summary in plain text using this exact format. Omit any section that has nothing meaningful to add:
+        Produce a concise summary in plain text using the sections below. Omit any section entirely if the transcript does not contain meaningful content for it:
+
+        ## Decisions
+        - [Decisions, agreements, or resolutions the team reached during the discussion]
+        - [Only include items where the team clearly settled on an answer or direction]
 
         ## Open Questions
-        - [Unresolved questions where no clear next step was identified]
-        - ONLY include a question here if there is no obvious action to answer it
+        - [Questions the team collectively raised but did NOT resolve in the discussion]
+        - [Only include questions that participants actually voiced — do not invent your own]
+        - [If the team identified a way to answer a question, put it in Next Steps instead]
 
         ## Context & Background
-        - [Relevant context, constraints, or assumptions surfaced in the conversation]
-        - [Dependencies or external factors that shape this work]
+        - [Context, constraints, or assumptions surfaced in the conversation that are NOT already in the ticket description]
+        - [Omit this section entirely if it would only repeat what the ticket description already says]
 
         ## Next Steps
-        - [Concrete actions, research tasks, or conversations that need to happen — include owner if mentioned]
+        - [Concrete actions, research tasks, or follow-ups that participants explicitly proposed — include owner if mentioned]
+        - [Only include next steps that someone in the meeting actually stated]
 
-        CRITICAL DEDUPLICATION RULE: A question and its corresponding action are the same item — never list both. If the discussion produced a clear next step to answer a question (e.g. "ask a stakeholder whether X is true"), put it only under Next Steps and omit it from Open Questions entirely. Only put something under Open Questions if there is genuinely no known next step to resolve it.
-
-        IMPORTANT: Keep output concise. Do not invent conclusions that were not stated. Do not restate anything already in the ticket description. Skip any section that has no meaningful content from the transcript.
+        CRITICAL RULES:
+        1. NEVER invent content. Every bullet must trace back to something a participant said. If you are unsure whether something was discussed, leave it out.
+        2. A question and its corresponding action are the same item — never list both. If the discussion produced a clear next step to answer a question, put it only under Next Steps and omit it from Open Questions entirely.
+        3. Do not restate anything already in the ticket description. If the transcript only reinforces what the description already says, omit that information.
+        4. Omit any section that would be empty. It is completely fine to produce only one or two sections, or even none if the transcript has no meaningful content.
       PROMPT
     end
 

@@ -155,6 +155,10 @@ RSpec.describe AsanaWhisperer::Summarizer do
       expect(prompt(**base_args)).to include("Research caching strategy")
     end
 
+    it "includes Decisions section header" do
+      expect(prompt(**base_args)).to include("## Decisions")
+    end
+
     it "includes Open Questions section header" do
       expect(prompt(**base_args)).to include("## Open Questions")
     end
@@ -169,6 +173,11 @@ RSpec.describe AsanaWhisperer::Summarizer do
 
     it "does not mention Requirements as the focus" do
       expect(prompt(**base_args)).not_to include("## Requirements")
+    end
+
+    it "instructs not to invent content" do
+      result = prompt(**base_args)
+      expect(result).to include("NEVER invent content")
     end
 
     it "labels your transcript as microphone contributions" do
@@ -324,7 +333,7 @@ RSpec.describe AsanaWhisperer::Summarizer do
 
     context "with mode: :discovery" do
       let(:discovery_text) do
-        "## Open Questions\n- Who owns this?\n\n## Next Steps\n- Set up a spike"
+        "## Decisions\n- Use Redis for caching\n\n## Open Questions\n- Who owns this?\n\n## Next Steps\n- Set up a spike"
       end
 
       it "uses the discovery prompt (mentions open questions)" do
