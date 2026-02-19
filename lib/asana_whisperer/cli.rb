@@ -21,8 +21,7 @@ module AsanaWhisperer
         abort usage
       end
 
-      apply_local_defaults! if local
-      validate_env!
+      validate_env!(local: local)
 
       task_gid = Asana.parse_task_gid(url)
       abort "Could not parse a task ID from that URL.\n#{usage}" unless task_gid
@@ -37,7 +36,7 @@ module AsanaWhisperer
       project_name = task.dig("projects", 0, "name")
       puts "  Project: #{project_name}" if project_name
       puts "  Mode   : #{mode == :discovery ? "Discovery" : "Requirements"}"
-      puts "  Backend: #{local ? "local (#{ENV["LLM_MODEL"]} / #{ENV["WHISPER_MODEL"]})" : "cloud"}"
+      puts "  Backend: #{local ? "local" : "cloud"}"
       puts
 
       # ── 2. Detect audio sources ────────────────────────────────────────────
@@ -181,25 +180,23 @@ module AsanaWhisperer
 
     private
 
-    def apply_local_defaults!
-      ENV["WHISPER_API_URL"] ||= "http://localhost:8000/v1/audio/transcriptions"
-      ENV["WHISPER_MODEL"]   ||= "Systran/faster-whisper-large-v3"
-      ENV["LLM_API_URL"]     ||= "http://localhost:11434/v1/chat/completions"
-      ENV["LLM_PROVIDER"]    ||= "openai"
-      ENV["LLM_MODEL"]       ||= "llama3.2"
-    end
+    def validate_env!(local:)
+      if local
+        required = %w[ASANA_ACCESS_TOKEN WHISPER_API_URL LLM_API_URL]
+        missing  = required.reject { |k| ENV[k]&.match?(/\S/) }
+        return if missing.empty?
 
-    def validate_env!
-      required = ["ASANA_ACCESS_TOKEN"]
-      required << "OPENAI_API_KEY"    unless ENV["WHISPER_API_URL"]&.match?(/\S/)
-      required << "ANTHROPIC_API_KEY" unless ENV["LLM_API_URL"]&.match?(/\S/)
+        abort "Missing environment variables required for --local mode: #{missing.join(", ")}\n" \
+              "Set these in .env — see README for local model setup."
+      else
+        required = %w[ASANA_ACCESS_TOKEN OPENAI_API_KEY ANTHROPIC_API_KEY]
+        missing  = required.reject { |k| ENV[k]&.match?(/\S/) }
+        return if missing.empty?
 
-      missing = required.reject { |k| ENV[k]&.match?(/\S/) }
-      return if missing.empty?
-
-      abort "Missing required environment variables: #{missing.join(", ")}\n" \
-            "Copy .env.example to .env and fill in your API keys.\n" \
-            "To use local models instead, set WHISPER_API_URL and LLM_API_URL in .env."
+        abort "Missing required environment variables: #{missing.join(", ")}\n" \
+              "Copy .env.example to .env and fill in your API keys.\n" \
+              "To use local models instead, pass --local (and set WHISPER_API_URL and LLM_API_URL in .env)."
+      end
     end
 
     def warn_stream_failed(audio, key)
