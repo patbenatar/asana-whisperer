@@ -17,7 +17,7 @@ source ~/faster-whisper-env/bin/activate && faster-whisper-server --config ~/whi
 ollama serve
 
 # Terminal 3 — Run the tool
-aw https://app.asana.com/0/PROJECT_ID/TASK_ID
+aw --local https://app.asana.com/0/PROJECT_ID/TASK_ID
 ```
 
 See [Local models](#local-models-optional) for initial setup.
@@ -83,11 +83,11 @@ Edit `.env` and fill in the keys you need:
 
 | Variable | Required | Where to get it |
 |---|---|---|
-| `OPENAI_API_KEY` | Unless using a local Whisper server | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
-| `ANTHROPIC_API_KEY` | Unless using a local LLM | [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys) |
+| `OPENAI_API_KEY` | Cloud mode (default) | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
+| `ANTHROPIC_API_KEY` | Cloud mode (default) | [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys) |
 | `ASANA_ACCESS_TOKEN` | Always | app.asana.com/0/my-apps → Personal Access Tokens |
 
-See [Local models](#local-models-optional) below to skip both cloud API keys entirely.
+When using `--local`, neither cloud key is required. See [Local models](#local-models-optional) below.
 
 ### 5. Make it available as `aw` from anywhere
 
@@ -132,8 +132,6 @@ LLM_API_URL=http://localhost:11434/v1/chat/completions
 LLM_PROVIDER=openai
 LLM_MODEL=llama3.2
 ```
-
-Unset or remove `ANTHROPIC_API_KEY` — it's no longer required.
 
 **Model recommendations:**
 
@@ -214,8 +212,6 @@ WHISPER_API_URL=http://localhost:8000/v1/audio/transcriptions
 WHISPER_MODEL=default   # must match the 'name' field in config, or use full model path if no config
 ```
 
-Unset or remove `OPENAI_API_KEY` — it's no longer required.
-
 **Model recommendations:**
 
 | Model | Accuracy | Speed | Notes |
@@ -257,24 +253,29 @@ LLM_PROVIDER=openai
 LLM_MODEL=llama3.2
 ```
 
-`OPENAI_API_KEY` and `ANTHROPIC_API_KEY` can be removed entirely.
-
-**3. Run as normal:**
+**3. Run with `--local`:**
 
 ```bash
-aw https://app.asana.com/0/PROJECT_ID/TASK_ID
+aw --local https://app.asana.com/0/PROJECT_ID/TASK_ID
+aw --local --discover https://app.asana.com/0/PROJECT_ID/TASK_ID
 ```
+
+`OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are not required in this mode.
 
 ---
 
 ## Usage
 
 ```bash
-# Requirements mode (default) — extracts requirements, prepends to ticket description
+# Cloud mode (default) — uses OpenAI Whisper + Claude
 aw https://app.asana.com/0/PROJECT_ID/TASK_ID
 
-# Discovery mode — surfaces open questions and next steps, posts as a ticket comment
+# Local mode — uses faster-whisper-server + Ollama (no cloud API keys needed)
+aw --local https://app.asana.com/0/PROJECT_ID/TASK_ID
+
+# Discovery mode (works with either)
 aw --discover https://app.asana.com/0/PROJECT_ID/TASK_ID
+aw --local --discover https://app.asana.com/0/PROJECT_ID/TASK_ID
 ```
 
 Paste the URL of the ticket you're about to discuss, start the meeting, then press **Enter** or **Ctrl+C** when the discussion is done.
@@ -289,6 +290,7 @@ Fetching ticket... done
   Ticket : Add OAuth login support
   Project: Engineering Backlog
   Mode   : Requirements
+  Backend: cloud
 
 Detecting audio sources... done
   Microphone : RDPSource
