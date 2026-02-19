@@ -27,7 +27,6 @@ module AsanaWhisperer
     private
 
     # ── One-and-done mode ─────────────────────────────────────────────────────
-    # Launched with a URL: record once, update the ticket, then exit.
 
     def run_once(url, mode:, local:)
       validate_env!(local: local)
@@ -37,7 +36,6 @@ module AsanaWhisperer
 
       audio = nil
       begin
-        # ── 1. Fetch the Asana ticket ────────────────────────────────────────
         print "Fetching ticket... "
         asana = Asana.new(ENV["ASANA_ACCESS_TOKEN"])
         task  = asana.fetch_task(task_gid)
@@ -50,7 +48,6 @@ module AsanaWhisperer
         puts "  Backend: #{local ? "local" : "cloud"}"
         puts
 
-        # ── 2. Detect audio sources ──────────────────────────────────────────
         print "Detecting audio sources... "
         audio = Audio.new
         begin
@@ -68,12 +65,10 @@ module AsanaWhisperer
 
         warn_if_no_monitor(audio)
 
-        # ── 3. Record ────────────────────────────────────────────────────────
         puts "Recording — press Enter or Ctrl+C to stop.\n\n"
         audio.start_recording!
         record_loop!(audio)
 
-        # ── 4. Stop recording ────────────────────────────────────────────────
         print "Stopping recording... "
         audio.stop_recording!
         puts "done"
@@ -83,7 +78,6 @@ module AsanaWhisperer
           abort "Both audio streams are empty — nothing to transcribe."
         end
 
-        # ── 5-7. Transcribe, summarize, update ───────────────────────────────
         transcribe_and_update(task_gid: task_gid, task: task, audio: audio,
                               mode: mode, local: local)
       rescue => e
@@ -95,15 +89,13 @@ module AsanaWhisperer
     end
 
     # ── Interactive mode ──────────────────────────────────────────────────────
-    # Launched without a URL: prompt for tickets in a loop. Each recording is
-    # handed off to a background thread for transcription + ticket update while
-    # the user can immediately start a new recording. On exit, waits for any
-    # in-flight background work to finish before quitting.
+    # Each recording is handed to a background thread ({state:, thread:, ...}).
+    # The UI maintains a consistent two-line zone — [status] above [active element]
+    # — throughout the prompt, recording, and exit-wait phases.
 
     def run_interactive(mode:, local:)
       validate_env!(local: local)
 
-      # ── 1. Detect audio sources once ────────────────────────────────────────
       print "Detecting audio sources... "
       audio_probe = Audio.new
       begin
@@ -130,15 +122,35 @@ module AsanaWhisperer
         puts
       end
 
-      bg_tasks = []  # [{thread:, buffer:, label:}]
+      # Each entry: { label:, state: :running/:done/:error, error:, thread: }
+      bg_tasks = []
 
       loop do
-        # Print buffered output from any completed background tasks before prompting.
-        flush_completed_tasks(bg_tasks)
-
+        # ── Prompt phase ────────────────────────────────────────────────────
+        # Two-line zone: [status] then [prompt].
+        # A status thread refreshes the status line in-place while stdin blocks.
+        print render_status(bg_tasks) + "\n"
         print "Enter Asana ticket URL (or 'done' to exit): "
         $stdout.flush
+
+        stop_status_update = false
+        status_thread = Thread.new do
+          loop do
+            sleep 1.5
+            break if stop_status_update
+            $stdout.print "\e[s\e[A\r\e[K#{render_status(bg_tasks)}\e[u"
+            $stdout.flush
+          end
+        end
+
         input = $stdin.gets&.strip
+
+        stop_status_update = true
+        status_thread.kill rescue nil
+
+        # Done/error tasks have been shown; clear them before the next prompt.
+        bg_tasks.reject! { |t| t[:state] != :running }
+
         break if input.nil? || %w[done exit quit].include?(input.downcase)
         next  if input.empty?
 
@@ -165,55 +177,67 @@ module AsanaWhisperer
         puts "  Mode   : #{mode == :discovery ? "Discovery" : "Requirements"}"
         puts
 
-        # Fresh audio session reusing the already-detected source names.
         audio = Audio.new(mic_source: mic_source, monitor_source: monitor_source)
 
         puts "Recording — press Enter or Ctrl+C to stop.\n\n"
         audio.start_recording!
-        record_loop!(audio)
+        record_loop!(audio, bg_tasks)
 
         print "Stopping recording... "
         audio.stop_recording!
         puts "done"
         print_recording_stats(audio)
 
-        # Capture locals for the background thread (avoid closure surprises).
+        if audio.file_size_mb(:mic) < 0.01 && audio.file_size_mb(:monitor) < 0.01
+          puts "  Warning: Both audio streams are empty — skipping transcription."
+          audio.cleanup!
+          next
+        end
+
+        # Build the shared-state entry before spawning so the thread can update it.
         bg_task_gid = task_gid
         bg_task     = task
         bg_audio    = audio
-        bg_label    = task["name"]
-        buffer      = StringIO.new
+        bg_entry    = { label: task["name"], state: :running, error: nil, thread: nil }
 
-        t = Thread.new do
+        bg_entry[:thread] = Thread.new do
           begin
-            buffer.puts
-            buffer.puts "─── #{bg_label} " + "─" * [2, 58 - bg_label.length].max
             transcribe_and_update(task_gid: bg_task_gid, task: bg_task,
                                   audio: bg_audio, mode: mode, local: local,
-                                  out: buffer)
+                                  out: StringIO.new)
+            bg_entry[:state] = :done
           rescue => e
-            buffer.puts "\nError: #{e.message}"
+            bg_entry[:state] = :error
+            bg_entry[:error] = e.message
           ensure
             bg_audio.cleanup!
           end
         end
 
-        bg_tasks << { thread: t, buffer: buffer, label: bg_label }
+        bg_tasks << bg_entry
       end
 
-      # Wait for any still-running background tasks before exiting.
+      # ── Exit: wait for any still-running background tasks ─────────────────
       unless bg_tasks.empty?
-        active = bg_tasks.select { |bg| bg[:thread].alive? }
-        if active.any?
-          n = active.length
+        n = bg_tasks.count { |t| t[:state] == :running }
+        if n > 0
           puts "\nWaiting for #{n} pending " \
                "transcription#{n == 1 ? "" : "s"} and ticket " \
                "update#{n == 1 ? "" : "s"}..."
         end
-        bg_tasks.each do |bg|
-          bg[:thread].join
-          flush_buffer(bg[:buffer])
+
+        # Show the status line and keep rewriting it in-place until all done.
+        print render_status(bg_tasks)
+        $stdout.flush
+
+        until bg_tasks.all? { |t| t[:state] != :running }
+          sleep 0.5
+          $stdout.print "\r\e[K#{render_status(bg_tasks)}"
+          $stdout.flush
         end
+
+        puts
+        bg_tasks.each { |t| t[:thread].join }
       end
 
     rescue => e
@@ -221,23 +245,53 @@ module AsanaWhisperer
       exit 1
     end
 
-    # ── Shared recording helpers ──────────────────────────────────────────────
+    # ── Recording loop ────────────────────────────────────────────────────────
 
-    def record_loop!(audio)
+    # Interactive mode (bg_tasks provided): two-line zone — status line above,
+    # timer line below — both redrawn every 0.5 s.
+    # One-and-done mode (bg_tasks = nil): single timer line only.
+    def record_loop!(audio, bg_tasks = nil)
       stop_requested = false
       Signal.trap("INT") { stop_requested = true }
       input_thread = Thread.new { $stdin.gets; stop_requested = true }
 
-      while !stop_requested
-        elapsed   = audio.elapsed_seconds
-        m, s      = elapsed.divmod(60)
-        size_info = audio.files.map { |key, _| "#{key}: #{audio.file_size_mb(key)} MB" }.join(" | ")
-        print "\r  \e[31m●\e[0m %02d:%02d  %s   " % [m, s, size_info]
-        $stdout.flush
-        sleep 0.5
+      if bg_tasks
+        # Print the initial status line; cursor lands at the start of the timer line.
+        puts render_status(bg_tasks)
+        first = true
+
+        while !stop_requested
+          elapsed   = audio.elapsed_seconds
+          m, s      = elapsed.divmod(60)
+          size_info = audio.files.map { |k, _| "#{k}: #{audio.file_size_mb(k)} MB" }.join(" | ")
+          timer     = "  \e[31m●\e[0m %02d:%02d  #{size_info}" % [m, s]
+
+          if first
+            print "\r\e[K#{timer}"
+            first = false
+          else
+            # Step up to the status line, rewrite it, step back to the timer line.
+            print "\e[A\r\e[K#{render_status(bg_tasks)}\r\n\r\e[K#{timer}"
+          end
+
+          $stdout.flush
+          sleep 0.5
+        end
+
+        puts # move past the timer line
+
+      else
+        while !stop_requested
+          elapsed   = audio.elapsed_seconds
+          m, s      = elapsed.divmod(60)
+          size_info = audio.files.map { |k, _| "#{k}: #{audio.file_size_mb(k)} MB" }.join(" | ")
+          print "\r\e[K  \e[31m●\e[0m %02d:%02d  #{size_info}" % [m, s]
+          $stdout.flush
+          sleep 0.5
+        end
+        puts "\r\n"
       end
 
-      puts "\r\n"
       input_thread.kill rescue nil
       Signal.trap("INT", "DEFAULT")
     end
@@ -252,9 +306,52 @@ module AsanaWhisperer
       puts
     end
 
+    # ── Status rendering ──────────────────────────────────────────────────────
+
+    STATUS_LABEL_MAX = 50
+
+    # Returns a single-line string (no trailing newline) describing the current
+    # state of all background tasks. Empty string when no tasks are tracked.
+    def render_status(bg_tasks)
+      return "" if bg_tasks.empty?
+
+      running = bg_tasks.count { |t| t[:state] == :running }
+      done    = bg_tasks.count { |t| t[:state] == :done }
+      errors  = bg_tasks.count { |t| t[:state] == :error }
+
+      if bg_tasks.length == 1
+        t     = bg_tasks.first
+        label = truncate_label(t[:label])
+        case t[:state]
+        when :running then "  \e[33m⟳\e[0m  #{label}"
+        when :done    then "  \e[32m✓\e[0m  #{label}"
+        when :error
+          err = t[:error] ? " — #{truncate_label(t[:error], 40)}" : ""
+          "  \e[31m✗\e[0m  #{label}#{err}"
+        end
+      else
+        # Collapse multiple tasks into one summary line.
+        if running > 0
+          parts = ["\e[33m⟳\e[0m  #{running} processing"]
+          parts << "\e[32m✓\e[0m #{done}"    if done   > 0
+          parts << "\e[31m✗\e[0m #{errors}"  if errors > 0
+          "  #{parts.join("  ")}"
+        else
+          parts = []
+          parts << "\e[32m✓\e[0m #{done} done"      if done   > 0
+          parts << "\e[31m✗\e[0m #{errors} failed"  if errors > 0
+          "  #{parts.join("  ")}"
+        end
+      end
+    end
+
+    def truncate_label(str, max = STATUS_LABEL_MAX)
+      return str.to_s if str.to_s.length <= max
+      str.to_s[0, max - 1] + "…"
+    end
+
     # ── Transcription / summarization / ticket update ─────────────────────────
-    # Accepts an `out:` IO so this can run in a background thread writing to a
-    # StringIO buffer without interleaving with the main thread's output.
+    # `out:` is a StringIO in interactive mode (background threads stay silent).
 
     def transcribe_and_update(task_gid:, task:, audio:, mode:, local:, out: $stdout)
       asana    = Asana.new(ENV["ASANA_ACCESS_TOKEN"])
@@ -264,12 +361,9 @@ module AsanaWhisperer
       warn_stream_failed(audio, :mic,     out: out) if mic_size < 0.01
       warn_stream_failed(audio, :monitor, out: out) if sys_size < 0.01 && audio.monitor_source
 
-      if mic_size < 0.01 && sys_size < 0.01
-        out.puts "Both audio streams are empty — nothing to transcribe."
-        return
-      end
+      raise "Both audio streams are empty — nothing to transcribe." \
+        if mic_size < 0.01 && sys_size < 0.01
 
-      # ── Transcribe ──────────────────────────────────────────────────────────
       transcriber       = Transcriber.new(ENV["OPENAI_API_KEY"])
       your_transcript   = nil
       others_transcript = nil
@@ -287,12 +381,9 @@ module AsanaWhisperer
       end
       out.puts
 
-      if your_transcript.to_s.strip.empty? && others_transcript.to_s.strip.empty?
-        out.puts "Transcription produced no text."
-        return
-      end
+      raise "Transcription produced no text." \
+        if your_transcript.to_s.strip.empty? && others_transcript.to_s.strip.empty?
 
-      # ── Summarize ────────────────────────────────────────────────────────────
       llm_label = ENV["LLM_MODEL"] || (ENV["LLM_API_URL"] ? "local LLM" : "Claude")
       out.print "Summarizing with #{llm_label}... "
       summarizer = Summarizer.new(ENV["ANTHROPIC_API_KEY"])
@@ -311,7 +402,6 @@ module AsanaWhisperer
       out.puts divider
       out.puts
 
-      # ── Update Asana ──────────────────────────────────────────────────────────
       if mode == :discovery
         out.print "Adding comment to Asana ticket... "
         asana.add_comment(task_gid, result[:html])
@@ -324,22 +414,7 @@ module AsanaWhisperer
       out.puts "Updated: #{task["permalink_url"]}"
     end
 
-    # ── Background-task output helpers ────────────────────────────────────────
-
-    def flush_completed_tasks(bg_tasks)
-      completed, pending = bg_tasks.partition { |bg| !bg[:thread].alive? }
-      completed.each { |bg| flush_buffer(bg[:buffer]) }
-      bg_tasks.replace(pending)
-    end
-
-    def flush_buffer(buffer)
-      content = buffer.string
-      return if content.strip.empty?
-      $stdout.print(content)
-      $stdout.flush
-    end
-
-    # ── Existing private helpers ──────────────────────────────────────────────
+    # ── Misc private helpers ──────────────────────────────────────────────────
 
     def validate_env!(local:)
       if local
@@ -361,7 +436,7 @@ module AsanaWhisperer
     end
 
     def warn_stream_failed(audio, key, out: $stdout)
-      label = key == :mic ? "Microphone" : "System audio"
+      label  = key == :mic ? "Microphone" : "System audio"
       source = key == :mic ? audio.mic_source : audio.monitor_source
       out.puts "  Warning: #{label} (#{source}) recorded nothing."
       err = audio.ffmpeg_error(key)
