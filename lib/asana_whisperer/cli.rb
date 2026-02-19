@@ -13,7 +13,7 @@ module AsanaWhisperer
 
     def run(argv)
       args  = argv.dup
-      mode  = args.delete("--discover") || args.delete("-d") ? :discovery : :requirements
+      mode  = args.delete("--discovery") || args.delete("-d") ? :discovery : :requirements
       local = args.delete("--local")    || args.delete("-l")
       url   = args.first&.strip
 
@@ -460,7 +460,7 @@ module AsanaWhisperer
 
     def usage
       <<~USAGE
-        Usage: asana-whisperer [--discover] [--local] [<asana-task-url>]
+        Usage: asana-whisperer [--discovery] [--local] [<asana-task-url>]
 
         When launched without a URL, enters interactive mode: prompts for an Asana
         ticket URL, records, then immediately asks for the next URL while the prior
@@ -471,7 +471,7 @@ module AsanaWhisperer
         When launched with a URL, records once and exits (one-and-done mode).
 
         Options:
-          --discover, -d   Discovery mode: surfaces open questions, context, and next
+          --discovery, -d  Discovery mode: surfaces open questions, context, and next
                            steps, then adds a comment to the ticket (default: Requirements
                            mode, which extracts concrete requirements and prepends them to
                            the ticket description)
@@ -483,9 +483,9 @@ module AsanaWhisperer
         Examples:
           asana-whisperer
           asana-whisperer https://app.asana.com/0/123456/789012
-          asana-whisperer --discover https://app.asana.com/1/ws/project/123/task/456
+          asana-whisperer --discovery https://app.asana.com/1/ws/project/123/task/456
           asana-whisperer --local https://app.asana.com/0/123456/789012
-          asana-whisperer --local --discover https://app.asana.com/0/123456/789012
+          asana-whisperer --local --discovery https://app.asana.com/0/123456/789012
 
         Starts recording your microphone (and system audio if available),
         then on Enter/Ctrl+C transcribes and summarizes the discussion

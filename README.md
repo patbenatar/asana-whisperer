@@ -5,7 +5,7 @@ Run `aw`, paste an Asana ticket URL, discuss it, press Enter — the conversatio
 Two modes:
 
 - **Requirements** (default) — extracts concrete requirements and prepends them to the ticket description
-- **Discovery** (`--discover`) — surfaces open questions, context, and next steps, then posts the result as a comment on the ticket
+- **Discovery** (`--discovery`) — surfaces open questions, context, and next steps, then posts the result as a comment on the ticket
 
 ## Quick start — cloud
 
@@ -272,7 +272,7 @@ LLM_MODEL=llama3.2
 
 ```bash
 aw --local https://app.asana.com/0/PROJECT_ID/TASK_ID
-aw --local --discover https://app.asana.com/0/PROJECT_ID/TASK_ID
+aw --local --discovery https://app.asana.com/0/PROJECT_ID/TASK_ID
 ```
 
 `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are not required in this mode.
@@ -285,13 +285,13 @@ aw --local --discover https://app.asana.com/0/PROJECT_ID/TASK_ID
 # Interactive mode — prompted for URLs one at a time, background processing between sessions
 aw
 aw --local
-aw --discover
+aw --discovery
 
 # One-and-done — record once for a specific ticket then exit
 aw https://app.asana.com/0/PROJECT_ID/TASK_ID
 aw --local https://app.asana.com/0/PROJECT_ID/TASK_ID
-aw --discover https://app.asana.com/0/PROJECT_ID/TASK_ID
-aw --local --discover https://app.asana.com/0/PROJECT_ID/TASK_ID
+aw --discovery https://app.asana.com/0/PROJECT_ID/TASK_ID
+aw --local --discovery https://app.asana.com/0/PROJECT_ID/TASK_ID
 ```
 
 In interactive mode: paste the ticket URL at the prompt, record the discussion, press **Enter** or **Ctrl+C** to stop. You'll be prompted for the next URL immediately while the previous recording processes in the background. Type `done` when you're finished for the day.
