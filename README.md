@@ -1,6 +1,6 @@
 # asana-whisperer
 
-Paste an Asana ticket URL, discuss it in your meeting, press Enter — the conversation gets summarized and written back to the ticket automatically.
+Run `aw`, paste an Asana ticket URL, discuss it, press Enter — the conversation gets summarized and written back to the ticket. Immediately paste the next ticket URL and start recording while the previous one is still being processed in the background.
 
 Two modes:
 
@@ -12,6 +12,10 @@ Two modes:
 Requires `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and `ASANA_ACCESS_TOKEN` in `.env`.
 
 ```bash
+# Interactive mode — work through multiple tickets back-to-back
+aw
+
+# One-and-done — record once for a single ticket then exit
 aw https://app.asana.com/0/PROJECT_ID/TASK_ID
 ```
 
@@ -26,7 +30,8 @@ source ~/faster-whisper-env/bin/activate && faster-whisper-server --config ~/whi
 # Terminal 2 — Ollama LLM (if not already running)
 ollama serve
 
-# Terminal 3 — Run the tool
+# Terminal 3 — Run the tool (interactive or one-and-done)
+aw --local
 aw --local https://app.asana.com/0/PROJECT_ID/TASK_ID
 ```
 
@@ -34,12 +39,14 @@ aw --local https://app.asana.com/0/PROJECT_ID/TASK_ID
 
 ## How it works
 
-1. Run the tool with an Asana task URL (and optionally `--discover`)
-2. It records your microphone and system audio (Google Meet participants) as two separate streams
-3. Press **Enter** or **Ctrl+C** to stop
-4. Both streams are transcribed via OpenAI Whisper (`gpt-4o-mini-transcribe`) or a local Whisper server
-5. An LLM (Claude by default, or a local model via Ollama) analyzes the discussion using the prompt for the active mode
-6. The summary is written back to the Asana ticket (prepended to the description in Requirements mode, posted as a comment in Discovery mode)
+1. Run `aw` (interactive) or `aw <url>` (one-and-done)
+2. In interactive mode, paste an Asana ticket URL at the prompt
+3. It records your microphone and system audio (Google Meet participants) as two separate streams
+4. Press **Enter** or **Ctrl+C** to stop recording
+5. In interactive mode, you're immediately prompted for the next ticket URL — transcription and ticket update for the just-finished recording happen in the background while you keep working
+6. A compact status indicator (`⟳` / `✓` / `✗`) tracks each background job throughout: above the recording timer, above the prompt, and during the exit wait
+7. Type `done` (or press **Ctrl+D**) when finished — the tool waits for any in-flight work before exiting
+8. Each recording is transcribed via OpenAI Whisper or a local Whisper server, summarized by an LLM (Claude by default, or Ollama), and written back to its Asana ticket
 
 ---
 
@@ -275,22 +282,69 @@ aw --local --discover https://app.asana.com/0/PROJECT_ID/TASK_ID
 ## Usage
 
 ```bash
-# Cloud mode (default) — uses OpenAI Whisper + Claude
+# Interactive mode — prompted for URLs one at a time, background processing between sessions
+aw
+aw --local
+aw --discover
+
+# One-and-done — record once for a specific ticket then exit
 aw https://app.asana.com/0/PROJECT_ID/TASK_ID
-
-# Local mode — uses faster-whisper-server + Ollama (no cloud API keys needed)
 aw --local https://app.asana.com/0/PROJECT_ID/TASK_ID
-
-# Discovery mode (works with either)
 aw --discover https://app.asana.com/0/PROJECT_ID/TASK_ID
 aw --local --discover https://app.asana.com/0/PROJECT_ID/TASK_ID
 ```
 
-Paste the URL of the ticket you're about to discuss, start the meeting, then press **Enter** or **Ctrl+C** when the discussion is done.
+In interactive mode: paste the ticket URL at the prompt, record the discussion, press **Enter** or **Ctrl+C** to stop. You'll be prompted for the next URL immediately while the previous recording processes in the background. Type `done` when you're finished for the day.
 
 ---
 
 ## What you'll see
+
+### Interactive mode (`aw`)
+
+```
+Detecting audio sources... done
+  Microphone : RDPSource
+  System audio: RDPSink.monitor
+
+Enter Asana ticket URL (or 'done' to exit): https://app.asana.com/0/123/456
+Fetching ticket... done
+
+  Ticket : Add OAuth login support
+  Project: Engineering Backlog
+  Mode   : Requirements
+
+Recording — press Enter or Ctrl+C to stop.
+
+  ⟳  Add OAuth login support          ← status line (background job)
+  ● 00:07  mic: 0.15 MB               ← timer line
+```
+
+Stop recording, and you're immediately back at the prompt while the previous session processes:
+
+```
+Stopping recording... done
+  Duration: 04:12
+  Mic file: 0.8 MB
+  System file: 0.7 MB
+
+  ⟳  Add OAuth login support
+Enter Asana ticket URL (or 'done' to exit): _
+```
+
+The status line updates in-place as the background job progresses (`⟳` → `✓` or `✗`), whether you're recording, waiting at the prompt, or at the exit wait. Type `done` to exit — the tool waits for any in-flight work before quitting:
+
+```
+  ✓  Add OAuth login support
+Enter Asana ticket URL (or 'done' to exit): done
+
+Waiting for 1 pending transcription and ticket update...
+  ✓  Sprint planning notes
+```
+
+### One-and-done mode (`aw <url>`)
+
+Transcription progress and the summary are printed directly to the terminal before exiting:
 
 ```
 Fetching ticket... done
@@ -327,9 +381,6 @@ Summarizing with Claude... done
 ## Key Context & Background
 - Decided to defer Apple Sign-In to a follow-up ticket
 - Must reuse the existing session cookie infrastructure
-
-## Open Questions
-- None
 ────────────────────────────────────────────────────────────
 
 Updating Asana ticket... done
