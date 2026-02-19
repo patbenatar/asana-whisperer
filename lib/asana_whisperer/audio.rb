@@ -8,11 +8,13 @@ module AsanaWhisperer
 
     attr_reader :mic_source, :monitor_source, :output_dir, :pids, :files, :start_time
 
-    def initialize
-      @pids        = {}
-      @files       = {}
-      @ffmpeg_logs = {}
-      @output_dir  = Dir.mktmpdir("asana-whisperer-")
+    def initialize(mic_source: nil, monitor_source: nil)
+      @pids           = {}
+      @files          = {}
+      @ffmpeg_logs    = {}
+      @output_dir     = Dir.mktmpdir("asana-whisperer-")
+      @mic_source     = mic_source
+      @monitor_source = monitor_source
     end
 
     def detect_sources!
@@ -37,7 +39,7 @@ module AsanaWhisperer
     end
 
     def start_recording!
-      raise "No audio sources detected. Did you call detect_sources!?" unless mic_source
+      raise "No microphone source available. Cannot record." unless mic_source
 
       @start_time = Time.now
 
