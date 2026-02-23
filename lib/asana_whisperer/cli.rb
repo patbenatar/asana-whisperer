@@ -364,7 +364,14 @@ module AsanaWhisperer
       raise "Both audio streams are empty — nothing to transcribe." \
         if mic_size < 0.01 && sys_size < 0.01
 
-      transcriber       = Transcriber.new(ENV["OPENAI_API_KEY"])
+      transcriber = if local
+        Transcriber.new(ENV["OPENAI_API_KEY"],
+          api_url: ENV.fetch("WHISPER_API_URL"),
+          model:   ENV.fetch("WHISPER_MODEL", "default"))
+      else
+        Transcriber.new(ENV["OPENAI_API_KEY"])
+      end
+
       your_transcript   = nil
       others_transcript = nil
 
@@ -384,9 +391,17 @@ module AsanaWhisperer
       raise "Transcription produced no text." \
         if your_transcript.to_s.strip.empty? && others_transcript.to_s.strip.empty?
 
-      llm_label = ENV["LLM_MODEL"] || (ENV["LLM_API_URL"] ? "local LLM" : "Claude")
+      summarizer = if local
+        Summarizer.new(ENV["ANTHROPIC_API_KEY"],
+          api_url:  ENV.fetch("LLM_API_URL"),
+          model:    ENV.fetch("LLM_MODEL", "llama3.2"),
+          provider: ENV.fetch("LLM_PROVIDER", "openai"))
+      else
+        Summarizer.new(ENV["ANTHROPIC_API_KEY"])
+      end
+
+      llm_label = local ? (ENV["LLM_MODEL"] || "local LLM") : "Claude"
       out.print "Summarizing with #{llm_label}... "
-      summarizer = Summarizer.new(ENV["ANTHROPIC_API_KEY"])
       result = summarizer.summarize(
         task_name:            task["name"],
         existing_description: task["html_notes"] || task["notes"],

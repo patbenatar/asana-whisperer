@@ -7,19 +7,19 @@ module AsanaWhisperer
     ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
     MAX_TOKENS        = 4096
 
-    # Local model support via environment variables:
+    # Local model support (--local flag):
     #
-    #   LLM_API_URL   — API endpoint (default: Anthropic cloud)
+    #   LLM_API_URL   — API endpoint (read only in --local mode)
     #                   Local Ollama: http://localhost:11434/v1/chat/completions
-    #   LLM_PROVIDER  — "anthropic" (default) or "openai" (Ollama / any OpenAI-compatible server)
-    #   LLM_MODEL     — Model name (default: claude-sonnet-4-6)
+    #   LLM_PROVIDER  — "anthropic" (default) or "openai" (read only in --local mode)
+    #   LLM_MODEL     — Model name (read only in --local mode)
     #                   Ollama examples: llama3.2, qwen2.5:7b, mistral
 
-    def initialize(api_key)
+    def initialize(api_key, api_url: ANTHROPIC_API_URL, model: "claude-sonnet-4-6", provider: "anthropic")
       @api_key  = api_key
-      @api_url  = ENV.fetch("LLM_API_URL", ANTHROPIC_API_URL)
-      @model    = ENV.fetch("LLM_MODEL", "claude-sonnet-4-6")
-      @provider = ENV.fetch("LLM_PROVIDER", "anthropic")
+      @api_url  = api_url
+      @model    = model
+      @provider = provider
     end
 
     # Returns { html: String, plain: String }

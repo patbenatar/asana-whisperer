@@ -8,19 +8,19 @@ module AsanaWhisperer
     OPENAI_WHISPER_URL = "https://api.openai.com/v1/audio/transcriptions"
     MAX_SIZE_BYTES     = 24 * 1024 * 1024  # 24 MB safety margin (API limit is 25 MB)
 
-    # Local model support via environment variables:
+    # Local model support (--local flag):
     #
-    #   WHISPER_API_URL — API endpoint (default: OpenAI cloud)
+    #   WHISPER_API_URL — API endpoint (read only in --local mode)
     #                     faster-whisper-server: http://localhost:8000/v1/audio/transcriptions
     #                     LocalAI:               http://localhost:8080/v1/audio/transcriptions
-    #   WHISPER_MODEL   — Model name (default: gpt-4o-mini-transcribe)
+    #   WHISPER_MODEL   — Model name (read only in --local mode, default: "default")
     #                     faster-whisper: Systran/faster-whisper-base, ...medium, ...large-v3
     #                     LocalAI/whisper.cpp: whisper-1, base, medium, large
 
-    def initialize(api_key)
+    def initialize(api_key, api_url: OPENAI_WHISPER_URL, model: "gpt-4o-mini-transcribe")
       @api_key  = api_key
-      @api_url  = ENV.fetch("WHISPER_API_URL", OPENAI_WHISPER_URL)
-      @model    = ENV.fetch("WHISPER_MODEL", "gpt-4o-mini-transcribe")
+      @api_url  = api_url
+      @model    = model
     end
 
     # Returns transcript text, or nil if the file is missing/too small.
