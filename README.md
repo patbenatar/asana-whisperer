@@ -24,8 +24,9 @@ aw https://app.asana.com/0/PROJECT_ID/TASK_ID
 Requires [initial setup](#local-models-optional). Once done, start the services and pass `--local`:
 
 ```bash
-# Terminal 1 — Whisper transcription
-source ~/faster-whisper-env/bin/activate && faster-whisper-server --config ~/whisper-config.yaml
+# Terminal 1 — Whisper transcription (GPU)
+source ~/faster-whisper-env/bin/activate
+faster-whisper-server --config ~/whisper-config.yaml
 
 # Terminal 2 — Ollama LLM (if not already running)
 ollama serve
@@ -177,6 +178,9 @@ uv python install 3.12
 uv venv --python 3.12 ~/faster-whisper-env
 source ~/faster-whisper-env/bin/activate
 uv pip install faster-whisper-server
+
+# For NVIDIA GPU acceleration, also install the CUDA runtime libraries:
+uv pip install nvidia-cublas-cu12 nvidia-cudnn-cu12
 ```
 
 **3. Fix a packaging bug** (the package is missing a required file):
@@ -189,7 +193,25 @@ version = "0.0.2"
 EOF
 ```
 
-**4. Create a config file** (optional but recommended for CPU optimization):
+**4. Create a config file:**
+
+GPU config (recommended if you have an NVIDIA GPU):
+
+```bash
+cat > ~/whisper-config.yaml << 'EOF'
+models:
+  - name: default
+    path: Systran/faster-whisper-large-v3
+    batch_size: 1
+    model_options:
+      device: cuda
+      compute_type: float16
+    transcribe_options: {}
+    translate_options: {}
+EOF
+```
+
+CPU config (no GPU):
 
 ```bash
 cat > ~/whisper-config.yaml << 'EOF'
@@ -206,21 +228,25 @@ models:
 EOF
 ```
 
-**5. Start the server:**
+**5. Add CUDA library path to your shell config** (GPU only):
+
+```bash
+# Add to ~/.zshrc (or ~/.bashrc)
+export LD_LIBRARY_PATH="$HOME/faster-whisper-env/lib/python3.12/site-packages/nvidia/cublas/lib:$HOME/faster-whisper-env/lib/python3.12/site-packages/nvidia/cudnn/lib:${LD_LIBRARY_PATH:-}"
+```
+
+Then reload: `source ~/.zshrc`
+
+**6. Start the server:**
 
 ```bash
 source ~/faster-whisper-env/bin/activate
-
-# With config (recommended for CPU)
 faster-whisper-server --config ~/whisper-config.yaml
-
-# Or without config (simpler, auto-downloads model)
-faster-whisper-server Systran/faster-whisper-base
 ```
 
 The first run downloads the model (~150 MB for base, ~3 GB for large-v3).
 
-**6. Add to `.env`:**
+**7. Add to `.env`:**
 
 ```
 WHISPER_API_URL=http://localhost:8000/v1/audio/transcriptions
@@ -235,7 +261,7 @@ WHISPER_MODEL=default   # must match the 'name' field in config, or use full mod
 | `Systran/faster-whisper-medium` | Medium | Fast | Decent quality |
 | `Systran/faster-whisper-large-v3` | High | Slower | Best accuracy (~3 GB) |
 
-> **GPU acceleration:** faster-whisper auto-detects CUDA (NVIDIA only). For WSL2, ensure your Windows NVIDIA driver is version 470.76+, then run `wsl --shutdown` from PowerShell and restart WSL. Verify with `nvidia-smi`. AMD GPUs are not supported.
+> **GPU acceleration:** faster-whisper uses CUDA via ctranslate2 (NVIDIA only). Install `nvidia-cublas-cu12` and `nvidia-cudnn-cu12` in the venv (step 2) and set `LD_LIBRARY_PATH` (step 5). For WSL2, ensure your Windows NVIDIA driver is version 470.76+. Verify with `nvidia-smi`. AMD GPUs are not supported.
 
 ### Running fully local
 
