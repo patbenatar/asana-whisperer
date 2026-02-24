@@ -12,14 +12,18 @@ module AsanaWhisperer
     end
 
     def run(argv)
-      args  = argv.dup
-      mode  = args.delete("--discovery") || args.delete("-d") ? :discovery : :requirements
-      local = args.delete("--local")    || args.delete("-l")
-      url   = args.first&.strip
+      args      = argv.dup
+      mode      = args.delete("--discovery") || args.delete("-d") ? :discovery : :requirements
+      local     = args.delete("--local")    || args.delete("-l")
+      benchmark = args.delete("--benchmark") || args.delete("-b")
+      url       = args.first&.strip
+
+      abort "Error: --benchmark requires --local.\n#{usage}" if benchmark && !local
 
       if url && !url.empty? && !url.start_with?("-")
-        run_once(url, mode: mode, local: local)
+        run_once(url, mode: mode, local: local, benchmark: benchmark)
       else
+        abort "Error: --benchmark is only supported in one-and-done mode (pass an Asana URL).\n#{usage}" if benchmark
         run_interactive(mode: mode, local: local)
       end
     end
@@ -28,8 +32,8 @@ module AsanaWhisperer
 
     # ── One-and-done mode ─────────────────────────────────────────────────────
 
-    def run_once(url, mode:, local:)
-      validate_env!(local: local)
+    def run_once(url, mode:, local:, benchmark: false)
+      validate_env!(local: local, benchmark: benchmark)
 
       task_gid = Asana.parse_task_gid(url)
       abort "Could not parse a task ID from that URL.\n#{usage}" unless task_gid
@@ -79,7 +83,7 @@ module AsanaWhisperer
         end
 
         transcribe_and_update(task_gid: task_gid, task: task, audio: audio,
-                              mode: mode, local: local)
+                              mode: mode, local: local, benchmark: benchmark)
       rescue => e
         $stderr.puts "\nError: #{e.message}"
         exit 1
@@ -353,7 +357,7 @@ module AsanaWhisperer
     # ── Transcription / summarization / ticket update ─────────────────────────
     # `out:` is a StringIO in interactive mode (background threads stay silent).
 
-    def transcribe_and_update(task_gid:, task:, audio:, mode:, local:, out: $stdout)
+    def transcribe_and_update(task_gid:, task:, audio:, mode:, local:, benchmark: false, out: $stdout)
       asana    = Asana.new(ENV["ASANA_ACCESS_TOKEN"])
       mic_size = audio.file_size_mb(:mic)
       sys_size = audio.file_size_mb(:monitor)
@@ -363,6 +367,8 @@ module AsanaWhisperer
 
       raise "Both audio streams are empty — nothing to transcribe." \
         if mic_size < 0.01 && sys_size < 0.01
+
+      local_t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC) if benchmark
 
       transcriber = if local
         Transcriber.new(ENV["OPENAI_API_KEY"],
@@ -412,6 +418,8 @@ module AsanaWhisperer
       out.puts "done"
       out.puts
 
+      local_elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - local_t0 if benchmark
+
       out.puts divider
       out.puts result[:plain]
       out.puts divider
@@ -427,12 +435,83 @@ module AsanaWhisperer
       out.puts "done"
       out.puts
       out.puts "Updated: #{task["permalink_url"]}"
+
+      if benchmark
+        out.puts
+        cloud_elapsed = run_cloud_pipeline(audio: audio, task: task, mode: mode,
+                                           mic_size: mic_size, sys_size: sys_size, out: out)
+        print_benchmark(local_elapsed, cloud_elapsed, out: out)
+      end
+    end
+
+    # ── Benchmark helpers ───────────────────────────────────────────────────
+
+    def run_cloud_pipeline(audio:, task:, mode:, mic_size:, sys_size:, out:)
+      out.puts "Running cloud pipeline for comparison..."
+      out.puts
+
+      t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+      cloud_transcriber = Transcriber.new(ENV["OPENAI_API_KEY"])
+
+      your_transcript   = nil
+      others_transcript = nil
+
+      if mic_size >= 0.01
+        out.print "  [cloud] Transcribing your audio... "
+        your_transcript = cloud_transcriber.transcribe(audio.files[:mic])
+        out.puts "done"
+      end
+
+      if sys_size >= 0.01
+        out.print "  [cloud] Transcribing meeting audio... "
+        others_transcript = cloud_transcriber.transcribe(audio.files[:monitor])
+        out.puts "done"
+      end
+
+      cloud_summarizer = Summarizer.new(ENV["ANTHROPIC_API_KEY"])
+
+      out.print "  [cloud] Summarizing with Claude... "
+      cloud_summarizer.summarize(
+        task_name:            task["name"],
+        existing_description: task["html_notes"] || task["notes"],
+        your_transcript:      your_transcript,
+        others_transcript:    others_transcript,
+        mode:                 mode
+      )
+      out.puts "done"
+      out.puts
+
+      Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0
+    end
+
+    def print_benchmark(local_elapsed, cloud_elapsed, out:)
+      diff     = local_elapsed - cloud_elapsed
+      faster   = diff > 0 ? "cloud" : "local"
+      slower   = diff > 0 ? "local" : "cloud"
+      base     = [local_elapsed, cloud_elapsed].min
+      pct      = base > 0 ? ((diff.abs / base) * 100).round : 0
+      sign     = diff > 0 ? "+" : "-"
+
+      out.puts "Benchmark results"
+      out.puts "─" * 41
+      out.puts "  Local : #{format("%.1f", local_elapsed)}s"
+      out.puts "  Cloud : #{format("%.1f", cloud_elapsed)}s"
+      out.puts "  Diff  : #{sign}#{format("%.1f", diff.abs)}s (#{slower} is #{pct}% slower)"
+      out.puts "─" * 41
     end
 
     # ── Misc private helpers ──────────────────────────────────────────────────
 
-    def validate_env!(local:)
-      if local
+    def validate_env!(local:, benchmark: false)
+      if benchmark
+        required = %w[ASANA_ACCESS_TOKEN WHISPER_API_URL LLM_API_URL OPENAI_API_KEY ANTHROPIC_API_KEY]
+        missing  = required.reject { |k| ENV[k]&.match?(/\S/) }
+        return if missing.empty?
+
+        abort "Missing environment variables required for --benchmark mode: #{missing.join(", ")}\n" \
+              "Benchmark needs both local and cloud credentials. See README for setup."
+      elsif local
         required = %w[ASANA_ACCESS_TOKEN WHISPER_API_URL LLM_API_URL]
         missing  = required.reject { |k| ENV[k]&.match?(/\S/) }
         return if missing.empty?
@@ -475,7 +554,7 @@ module AsanaWhisperer
 
     def usage
       <<~USAGE
-        Usage: asana-whisperer [--discovery] [--local] [<asana-task-url>]
+        Usage: asana-whisperer [--discovery] [--local] [--benchmark] [<asana-task-url>]
 
         When launched without a URL, enters interactive mode: prompts for an Asana
         ticket URL, records, then immediately asks for the next URL while the prior
@@ -494,6 +573,10 @@ module AsanaWhisperer
                            faster-whisper-server to be running). No API keys needed.
                            Model defaults can be overridden via WHISPER_MODEL / LLM_MODEL
                            in .env.
+          --benchmark, -b  Benchmark mode: runs both local and cloud pipelines on the
+                           same audio and prints a timing comparison. Requires --local
+                           and a URL (one-and-done mode only). Both local and cloud env
+                           vars must be set.
 
         Examples:
           asana-whisperer
@@ -501,6 +584,7 @@ module AsanaWhisperer
           asana-whisperer --discovery https://app.asana.com/1/ws/project/123/task/456
           asana-whisperer --local https://app.asana.com/0/123456/789012
           asana-whisperer --local --discovery https://app.asana.com/0/123456/789012
+          asana-whisperer --local --benchmark https://app.asana.com/0/123456/789012
 
         Starts recording your microphone (and system audio if available),
         then on Enter/Ctrl+C transcribes and summarizes the discussion

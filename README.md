@@ -21,17 +21,9 @@ aw https://app.asana.com/0/PROJECT_ID/TASK_ID
 
 ## Quick start — local models
 
-Requires [initial setup](#local-models-optional). Once done, start the services and pass `--local`:
+Requires [initial setup](#local-models-optional). Once done, both services run in the background automatically — just pass `--local`:
 
 ```bash
-# Terminal 1 — Whisper transcription (GPU)
-source ~/faster-whisper-env/bin/activate
-faster-whisper-server --config ~/whisper-config.yaml
-
-# Terminal 2 — Ollama LLM (if not already running)
-ollama serve
-
-# Terminal 3 — Run the tool (interactive or one-and-done)
 aw --local
 aw --local https://app.asana.com/0/PROJECT_ID/TASK_ID
 ```
@@ -201,7 +193,7 @@ GPU config (recommended if you have an NVIDIA GPU):
 cat > ~/whisper-config.yaml << 'EOF'
 models:
   - name: default
-    path: Systran/faster-whisper-large-v3
+    path: Systran/faster-whisper-medium
     batch_size: 1
     model_options:
       device: cuda
@@ -237,14 +229,38 @@ export LD_LIBRARY_PATH="$HOME/faster-whisper-env/lib/python3.12/site-packages/nv
 
 Then reload: `source ~/.zshrc`
 
-**6. Start the server:**
+**6. Run as a systemd user service** (starts automatically on WSL boot):
 
 ```bash
-source ~/faster-whisper-env/bin/activate
-faster-whisper-server --config ~/whisper-config.yaml
+mkdir -p ~/.config/systemd/user
+
+cat > ~/.config/systemd/user/faster-whisper.service << 'EOF'
+[Unit]
+Description=faster-whisper-server (local Whisper transcription)
+
+[Service]
+ExecStart=%h/faster-whisper-env/bin/faster-whisper-server --config %h/whisper-config.yaml
+Environment=LD_LIBRARY_PATH=%h/faster-whisper-env/lib/python3.12/site-packages/nvidia/cublas/lib:%h/faster-whisper-env/lib/python3.12/site-packages/nvidia/cudnn/lib
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+EOF
+
+systemctl --user daemon-reload
+systemctl --user enable --now faster-whisper
 ```
 
-The first run downloads the model (~150 MB for base, ~3 GB for large-v3).
+The first run downloads the model (~150 MB for base, ~1.5 GB for medium, ~3 GB for large-v3).
+
+Useful commands:
+
+```bash
+systemctl --user status faster-whisper    # check status
+journalctl --user -u faster-whisper -f    # tail logs
+systemctl --user restart faster-whisper   # restart (e.g. after config change)
+```
 
 **7. Add to `.env`:**
 
@@ -258,8 +274,8 @@ WHISPER_MODEL=default   # must match the 'name' field in config, or use full mod
 | Model | Accuracy | Speed | Notes |
 |---|---|---|---|
 | `Systran/faster-whisper-base` | Low | Very fast | Good for clear audio (~150 MB) |
-| `Systran/faster-whisper-medium` | Medium | Fast | Decent quality |
-| `Systran/faster-whisper-large-v3` | High | Slower | Best accuracy (~3 GB) |
+| `Systran/faster-whisper-medium` | Medium | Fast | Best speed/accuracy tradeoff (~1.5 GB) — recommended |
+| `Systran/faster-whisper-large-v3` | High | Slow | Best accuracy but ~4x slower than cloud on consumer GPUs (~3 GB) |
 
 > **GPU acceleration:** faster-whisper uses CUDA via ctranslate2 (NVIDIA only). Install `nvidia-cublas-cu12` and `nvidia-cudnn-cu12` in the venv (step 2) and set `LD_LIBRARY_PATH` (step 5). For WSL2, ensure your Windows NVIDIA driver is version 470.76+. Verify with `nvidia-smi`. AMD GPUs are not supported.
 
@@ -267,15 +283,15 @@ WHISPER_MODEL=default   # must match the 'name' field in config, or use full mod
 
 To run the entire pipeline without any cloud API keys:
 
-**1. Start the services** (two terminal tabs, or add to a startup script):
+**1. Start the services:**
 
 ```bash
-# Terminal 1 — Ollama (LLM)
-ollama serve   # or it may already be running as a systemd service
+# Ollama — usually already running as a systemd service after install
+ollama serve
 
-# Terminal 2 — faster-whisper-server (transcription)
-source ~/faster-whisper-env/bin/activate
-faster-whisper-server --config ~/whisper-config.yaml
+# faster-whisper-server — if you followed the setup above, it's already
+# running as a systemd user service. Verify with:
+systemctl --user status faster-whisper
 ```
 
 **2. Set `.env`:**
