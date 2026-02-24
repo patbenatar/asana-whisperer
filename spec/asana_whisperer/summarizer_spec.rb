@@ -212,6 +212,84 @@ RSpec.describe AsanaWhisperer::Summarizer do
     end
   end
 
+  # ── #build_design_review_prompt ───────────────────────────────────────
+
+  describe "#build_design_review_prompt (private)" do
+    def prompt(**kwargs)
+      summarizer.send(:build_design_review_prompt, **kwargs)
+    end
+
+    let(:base_args) do
+      {
+        task_name:            "Redesign checkout flow",
+        existing_description: "",
+        your_transcript:      "I think the layout needs more whitespace.",
+        others_transcript:    "We should send this back for the spacing issue."
+      }
+    end
+
+    it "includes the task name" do
+      expect(prompt(**base_args)).to include("Redesign checkout flow")
+    end
+
+    it "includes Outcome section header" do
+      expect(prompt(**base_args)).to include("## Outcome")
+    end
+
+    it "includes Requested Changes section header" do
+      expect(prompt(**base_args)).to include("## Requested Changes")
+    end
+
+    it "includes Context & Background section header" do
+      expect(prompt(**base_args)).to include("## Context & Background")
+    end
+
+    it "does not mention Requirements or Open Questions sections" do
+      result = prompt(**base_args)
+      expect(result).not_to include("## Requirements")
+      expect(result).not_to include("## Open Questions")
+    end
+
+    it "instructs not to invent content" do
+      expect(prompt(**base_args)).to include("NEVER invent content")
+    end
+
+    it "mentions design review context" do
+      expect(prompt(**base_args)).to include("design review")
+    end
+
+    it "labels your transcript as microphone contributions" do
+      expect(prompt(**base_args)).to include("YOUR CONTRIBUTIONS (microphone):")
+    end
+
+    it "labels others' transcript as system audio contributions" do
+      expect(prompt(**base_args)).to include("OTHERS IN THE MEETING (system audio):")
+    end
+
+    it "uses mic-only phrasing when others_transcript is nil" do
+      args = base_args.merge(others_transcript: nil)
+      expect(prompt(**args)).to include("microphone only")
+      expect(prompt(**args)).not_to include("OTHERS IN THE MEETING")
+    end
+
+    it "uses system-audio-only phrasing when your_transcript is nil" do
+      args = base_args.merge(your_transcript: nil, others_transcript: "Others spoke")
+      expect(prompt(**args)).to include("system audio only")
+      expect(prompt(**args)).not_to include("YOUR CONTRIBUTIONS")
+    end
+
+    it "shows a placeholder when existing description is empty" do
+      expect(prompt(**base_args)).to include("no existing description")
+    end
+
+    it "strips HTML tags from the existing description" do
+      args = base_args.merge(existing_description: "<body><h1>Old design notes</h1></body>")
+      result = prompt(**args)
+      expect(result).to include("Old design notes")
+      expect(result).not_to include("<h1>")
+    end
+  end
+
   # ── #summarize ─────────────────────────────────────────────────────────────
 
   describe "#summarize" do
@@ -391,6 +469,70 @@ RSpec.describe AsanaWhisperer::Summarizer do
         )
 
         expect(result[:plain]).to eq(discovery_text)
+      end
+    end
+
+    context "with mode: :review" do
+      let(:design_review_text) do
+        "## Outcome\n- Sent back for revision — spacing and hierarchy need rework\n\n## Requested Changes\n- Increase whitespace between sections\n- Revisit the heading hierarchy"
+      end
+
+      it "uses the design review prompt (mentions design review)" do
+        captured_prompt = nil
+        allow(mock_http).to receive(:request) do |req|
+          captured_prompt = JSON.parse(req.body).dig("messages", 0, "content")
+          api_response(design_review_text)
+        end
+
+        summarizer.summarize(
+          task_name: "X", existing_description: "",
+          your_transcript: "a", others_transcript: "b",
+          mode: :review
+        )
+
+        expect(captured_prompt).to include("design review")
+      end
+
+      it "does not use the requirements or discovery prompt" do
+        captured_prompt = nil
+        allow(mock_http).to receive(:request) do |req|
+          captured_prompt = JSON.parse(req.body).dig("messages", 0, "content")
+          api_response(design_review_text)
+        end
+
+        summarizer.summarize(
+          task_name: "X", existing_description: "",
+          your_transcript: "a", others_transcript: "b",
+          mode: :review
+        )
+
+        expect(captured_prompt).not_to include("acceptance criteria")
+        expect(captured_prompt).not_to include("Open Questions")
+      end
+
+      it "returns both :plain and :html" do
+        allow(mock_http).to receive(:request).and_return(api_response(design_review_text))
+
+        result = summarizer.summarize(
+          task_name: "X", existing_description: "",
+          your_transcript: "a", others_transcript: "b",
+          mode: :review
+        )
+
+        expect(result).to have_key(:plain)
+        expect(result).to have_key(:html)
+      end
+
+      it "returns the raw Claude text as :plain" do
+        allow(mock_http).to receive(:request).and_return(api_response(design_review_text))
+
+        result = summarizer.summarize(
+          task_name: "X", existing_description: "",
+          your_transcript: "a", others_transcript: "b",
+          mode: :review
+        )
+
+        expect(result[:plain]).to eq(design_review_text)
       end
     end
   end

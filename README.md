@@ -2,14 +2,15 @@
 
 Run `aw`, paste an Asana ticket URL, discuss it, press Enter — the conversation gets summarized and written back to the ticket. Immediately paste the next ticket URL and start recording while the previous one is still being processed in the background.
 
-Two modes:
+Three modes (`--mode=`):
 
 - **Requirements** (default) — extracts concrete requirements and prepends them to the ticket description
-- **Discovery** (`--discovery`) — surfaces open questions, context, and next steps, then posts the result as a comment on the ticket
+- **Discovery** (`--mode=discovery`) — surfaces open questions, context, and next steps, then posts the result as a comment on the ticket
+- **Design Review** (`--mode=review`) — captures the outcome of a design review (accepted or sent back for revision), any requested changes, and relevant context, then posts as a comment
 
-## Quick start — cloud
+## Quick start
 
-Requires `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and `ASANA_ACCESS_TOKEN` in `.env`.
+Uses local models by default ([setup required](#local-models)). Requires `ASANA_ACCESS_TOKEN`, `WHISPER_API_URL`, and `LLM_API_URL` in `.env`.
 
 ```bash
 # Interactive mode — work through multiple tickets back-to-back
@@ -17,15 +18,9 @@ aw
 
 # One-and-done — record once for a single ticket then exit
 aw https://app.asana.com/0/PROJECT_ID/TASK_ID
-```
 
-## Quick start — local models
-
-Requires [initial setup](#local-models-optional). Once done, both services run in the background automatically — just pass `--local`:
-
-```bash
-aw --local
-aw --local https://app.asana.com/0/PROJECT_ID/TASK_ID
+# Use cloud APIs instead (requires OPENAI_API_KEY and ANTHROPIC_API_KEY)
+aw --cloud https://app.asana.com/0/PROJECT_ID/TASK_ID
 ```
 
 ---
@@ -39,7 +34,7 @@ aw --local https://app.asana.com/0/PROJECT_ID/TASK_ID
 5. In interactive mode, you're immediately prompted for the next ticket URL — transcription and ticket update for the just-finished recording happen in the background while you keep working
 6. A compact status indicator (`⟳` / `✓` / `✗`) tracks each background job throughout: above the recording timer, above the prompt, and during the exit wait
 7. Type `done` (or press **Ctrl+D**) when finished — the tool waits for any in-flight work before exiting
-8. Each recording is transcribed via OpenAI Whisper or a local Whisper server, summarized by an LLM (Claude by default, or Ollama), and written back to its Asana ticket
+8. Each recording is transcribed via a local Whisper server (or OpenAI Whisper with `--cloud`), summarized by an LLM (Ollama by default, or Claude with `--cloud`), and written back to its Asana ticket
 
 ---
 
@@ -91,11 +86,13 @@ Edit `.env` and fill in the keys you need:
 
 | Variable | Required | Where to get it |
 |---|---|---|
-| `OPENAI_API_KEY` | Cloud mode (default) | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
-| `ANTHROPIC_API_KEY` | Cloud mode (default) | [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys) |
 | `ASANA_ACCESS_TOKEN` | Always | app.asana.com/0/my-apps → Personal Access Tokens |
+| `WHISPER_API_URL` | Local mode (default) | See [Local models](#local-models) below |
+| `LLM_API_URL` | Local mode (default) | See [Local models](#local-models) below |
+| `OPENAI_API_KEY` | `--cloud` or `--benchmark` | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
+| `ANTHROPIC_API_KEY` | `--cloud` or `--benchmark` | [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys) |
 
-When using `--local`, neither cloud key is required. See [Local models](#local-models-optional) below.
+Cloud API keys are only required when using `--cloud` or `--benchmark`. See [Local models](#local-models) for the default local setup.
 
 ### 5. Make it available as `aw` from anywhere
 
@@ -112,11 +109,11 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ---
 
-## Local models (optional)
+## Local models
 
-Both the transcription and summarization steps can run locally instead of hitting the cloud APIs. Benefits: faster round-trips (no network), no per-request cost, offline operation, and privacy.
+By default, both the transcription and summarization steps run locally. Benefits: faster round-trips (no network), no per-request cost, offline operation, and privacy. Pass `--cloud` to use cloud APIs instead.
 
-Each service is configured independently — you can run one locally and keep the other on the cloud.
+Each service is configured independently.
 
 ### LLM summarization via Ollama
 
@@ -279,11 +276,9 @@ WHISPER_MODEL=default   # must match the 'name' field in config, or use full mod
 
 > **GPU acceleration:** faster-whisper uses CUDA via ctranslate2 (NVIDIA only). Install `nvidia-cublas-cu12` and `nvidia-cudnn-cu12` in the venv (step 2) and set `LD_LIBRARY_PATH` (step 5). For WSL2, ensure your Windows NVIDIA driver is version 470.76+. Verify with `nvidia-smi`. AMD GPUs are not supported.
 
-### Running fully local
+### Putting it all together
 
-To run the entire pipeline without any cloud API keys:
-
-**1. Start the services:**
+Once both services are set up, verify they're running:
 
 ```bash
 # Ollama — usually already running as a systemd service after install
@@ -294,10 +289,10 @@ ollama serve
 systemctl --user status faster-whisper
 ```
 
-**2. Set `.env`:**
+Set `.env`:
 
 ```
-# Asana (still required)
+# Asana (always required)
 ASANA_ACCESS_TOKEN=...
 
 # Local transcription
@@ -310,14 +305,15 @@ LLM_PROVIDER=openai
 LLM_MODEL=llama3.2
 ```
 
-**3. Run with `--local`:**
+Then just run:
 
 ```bash
-aw --local https://app.asana.com/0/PROJECT_ID/TASK_ID
-aw --local --discovery https://app.asana.com/0/PROJECT_ID/TASK_ID
+aw https://app.asana.com/0/PROJECT_ID/TASK_ID
+aw --mode=discovery https://app.asana.com/0/PROJECT_ID/TASK_ID
+aw --mode=review https://app.asana.com/0/PROJECT_ID/TASK_ID
 ```
 
-`OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are not required in this mode.
+`OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are only needed for `--cloud` or `--benchmark`.
 
 ---
 
@@ -326,14 +322,17 @@ aw --local --discovery https://app.asana.com/0/PROJECT_ID/TASK_ID
 ```bash
 # Interactive mode — prompted for URLs one at a time, background processing between sessions
 aw
-aw --local
-aw --discovery
+aw --mode=discovery
+aw --mode=review
 
 # One-and-done — record once for a specific ticket then exit
 aw https://app.asana.com/0/PROJECT_ID/TASK_ID
-aw --local https://app.asana.com/0/PROJECT_ID/TASK_ID
-aw --discovery https://app.asana.com/0/PROJECT_ID/TASK_ID
-aw --local --discovery https://app.asana.com/0/PROJECT_ID/TASK_ID
+aw --mode=discovery https://app.asana.com/0/PROJECT_ID/TASK_ID
+aw --mode=review https://app.asana.com/0/PROJECT_ID/TASK_ID
+
+# Use cloud APIs instead of local models
+aw --cloud https://app.asana.com/0/PROJECT_ID/TASK_ID
+aw --cloud --mode=discovery https://app.asana.com/0/PROJECT_ID/TASK_ID
 ```
 
 In interactive mode: paste the ticket URL at the prompt, record the discussion, press **Enter** or **Ctrl+C** to stop. You'll be prompted for the next URL immediately while the previous recording processes in the background. Type `done` when you're finished for the day.
@@ -394,7 +393,7 @@ Fetching ticket... done
   Ticket : Add OAuth login support
   Project: Engineering Backlog
   Mode   : Requirements
-  Backend: cloud
+  Backend: local
 
 Detecting audio sources... done
   Microphone : RDPSource
@@ -412,7 +411,7 @@ Stopping recording... done
 Transcribing your audio... done
 Transcribing meeting audio... done
 
-Summarizing with Claude... done
+Summarizing with llama3.2... done
 
 ────────────────────────────────────────────────────────────
 ## Requirements
@@ -434,9 +433,9 @@ Updated: https://app.asana.com/0/123/456
 
 ## Cost estimate
 
-Cloud APIs, 60-minute meeting:
+With local models (default): **$0.00 per meeting**
+
+With `--cloud`, 60-minute meeting:
 - Transcription: ~$0.36 (120 min audio × $0.003/min)
 - Summarization: ~$0.10–$0.15 (Claude Sonnet)
 - **Total: under $0.55 per meeting**
-
-With local models (Ollama + faster-whisper-server): **$0.00 per meeting**

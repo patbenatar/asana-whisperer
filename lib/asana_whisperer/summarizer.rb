@@ -24,7 +24,11 @@ module AsanaWhisperer
 
     # Returns { html: String, plain: String }
     def summarize(task_name:, existing_description:, your_transcript:, others_transcript:, mode: :requirements)
-      builder = mode == :discovery ? :build_discovery_prompt : :build_prompt
+      builder = case mode
+                when :discovery then :build_discovery_prompt
+                when :review    then :build_design_review_prompt
+                else                 :build_prompt
+                end
       prompt = send(builder,
         task_name:            task_name,
         existing_description: existing_description,
@@ -81,18 +85,18 @@ module AsanaWhisperer
 
         Your task is to extract only the NEW requirements and decisions from the meeting discussion. Focus entirely on what was said in the transcript, not on restating what's already in the ticket description.
 
-        Produce a clear, structured summary in plain text using this exact format:
+        You may use these sections — but ONLY include a section if it has real bullet points beneath it:
 
-        ## Requirements
-        - [Each concrete requirement or decision from the discussion as a bullet point]
-        - [Be specific and actionable — write them as acceptance criteria when possible]
-        - [Only include requirements explicitly stated or agreed upon in the transcript]
+        "## Requirements" — concrete requirements or decisions from the discussion, written as specific, actionable bullet points (acceptance criteria when possible). Only include items explicitly stated or agreed upon in the transcript.
 
-        ## Key Context & Background
-        - [OMIT THIS SECTION ENTIRELY unless there is critical context that: (1) does NOT fit as a requirement, (2) is NOT already in the existing ticket description, AND (3) is NOT redundant with anything in the Requirements section above]
-        - [This section is rarely needed — most discussions produce only requirements]
+        "## Key Context & Background" — critical context that does NOT fit as a requirement AND is NOT already in the existing ticket description AND is NOT redundant with the Requirements section. This section is rarely needed.
 
-        IMPORTANT: Keep the output minimal. Do not pad with filler. Do not restate anything already in the ticket or in the Requirements section. If the transcript is unclear or garbled, skip those parts. Omit the Key Context section if it would be redundant.
+        OUTPUT RULES:
+        1. Every line you output must be a section header ("## ...") or a bullet point ("- ..."). Nothing else. No introductions, no conclusions, no commentary, no notes about omitted sections, no explanations.
+        2. A bullet point must contain a specific, concrete piece of information from the transcript. A bullet that says there is nothing to report (e.g. "Nothing new was discussed", "No additional context") is not real content — do not write it.
+        3. Do not restate anything already in the ticket description.
+        4. If a section would have zero bullet points, do not include its header.
+        5. If the discussion produced nothing new at all, output nothing — a completely empty response.
       PROMPT
     end
 
@@ -137,30 +141,83 @@ module AsanaWhisperer
 
         Your task is to surface the key discovery outputs from this conversation. Only include information that was explicitly discussed in the transcript. Do not generate your own questions, conclusions, or inferences.
 
-        Produce a concise summary in plain text using the sections below. Omit any section entirely if the transcript does not contain meaningful content for it:
+        You may use these sections — but ONLY include a section if it has real bullet points beneath it:
 
-        ## Decisions
-        - [Decisions, agreements, or resolutions the team reached during the discussion]
-        - [Only include items where the team clearly settled on an answer or direction]
+        "## Decisions" — decisions, agreements, or resolutions the team reached. Only include items where the team clearly settled on an answer or direction.
 
-        ## Open Questions
-        - [Questions the team collectively raised but did NOT resolve in the discussion]
-        - [Only include questions that participants actually voiced — do not invent your own]
-        - [If the team identified a way to answer a question, put it in Next Steps instead]
+        "## Open Questions" — questions the team raised but did NOT resolve. Only include questions that participants actually voiced. If the team identified a way to answer a question, put it in Next Steps instead, not here.
 
-        ## Context & Background
-        - [Context, constraints, or assumptions surfaced in the conversation that are NOT already in the ticket description]
-        - [Omit this section entirely if it would only repeat what the ticket description already says]
+        "## Context & Background" — context, constraints, or assumptions surfaced in the conversation that are NOT already in the ticket description.
 
-        ## Next Steps
-        - [Concrete actions, research tasks, or follow-ups that participants explicitly proposed — include owner if mentioned]
-        - [Only include next steps that someone in the meeting actually stated]
+        "## Next Steps" — concrete actions, research tasks, or follow-ups that participants explicitly proposed. Include owner if mentioned.
 
-        CRITICAL RULES:
-        1. NEVER invent content. Every bullet must trace back to something a participant said. If you are unsure whether something was discussed, leave it out.
-        2. A question and its corresponding action are the same item — never list both. If the discussion produced a clear next step to answer a question, put it only under Next Steps and omit it from Open Questions entirely.
-        3. Do not restate anything already in the ticket description. If the transcript only reinforces what the description already says, omit that information.
-        4. Omit any section that would be empty. It is completely fine to produce only one or two sections, or even none if the transcript has no meaningful content.
+        OUTPUT RULES:
+        1. Every line you output must be a section header ("## ...") or a bullet point ("- ..."). Nothing else. No introductions, no conclusions, no commentary, no notes about omitted sections, no explanations.
+        2. A bullet point must contain a specific, concrete piece of information from the transcript. A bullet that says there is nothing to report (e.g. "Nothing new was discussed", "No relevant context") is not real content — do not write it.
+        3. NEVER invent content. Every bullet must trace back to something a participant said.
+        4. Do not restate anything already in the ticket description.
+        5. If a section would have zero bullet points, do not include its header.
+        6. If the discussion produced nothing worth capturing, output nothing — a completely empty response.
+      PROMPT
+    end
+
+    def build_design_review_prompt(task_name:, existing_description:, your_transcript:, others_transcript:)
+      desc_section = existing_description.to_s.empty? ?
+        "(no existing description)" :
+        existing_description.gsub(/<[^>]+>/, " ").squeeze(" ").strip[0, 2000]
+
+      has_your   = your_transcript   && !your_transcript.strip.empty?
+      has_others = others_transcript && !others_transcript.strip.empty?
+
+      transcript_section = if has_your && has_others
+        <<~TEXT
+          YOUR CONTRIBUTIONS (microphone):
+          #{your_transcript.strip}
+
+          OTHERS IN THE MEETING (system audio):
+          #{others_transcript.strip}
+        TEXT
+      elsif has_your
+        <<~TEXT
+          MEETING TRANSCRIPT (microphone only — system audio was not captured):
+          #{your_transcript.strip}
+        TEXT
+      else
+        <<~TEXT
+          MEETING TRANSCRIPT (system audio only — microphone was not captured):
+          #{others_transcript.strip}
+        TEXT
+      end
+
+      <<~PROMPT
+        You are capturing notes from a design review meeting. The team was reviewing completed design or product work on a ticket to decide whether it is ready to move forward or needs to go back for revision.
+
+        TICKET NAME: #{task_name}
+
+        EXISTING TICKET DESCRIPTION (for context — do not repeat what's already captured here):
+        #{desc_section}
+
+        MEETING DISCUSSION:
+        #{transcript_section}
+
+        Your task is to capture the outcome of the design review and any feedback that was discussed. Only include information that was explicitly discussed in the transcript. Do not generate your own feedback or inferences.
+
+        You may use these sections — but ONLY include a section if it has real bullet points beneath it:
+
+        "## Outcome" — whether the ticket was accepted and is moving forward, or is being sent back for revision. If sent back, briefly state the core reason why.
+
+        "## Requested Changes" — specific, concrete, actionable changes that must be completed before the ticket can move forward. Only include this section if the ticket is being sent back. Do not list minor suggestions or nice-to-haves.
+
+        "## Context & Background" — new context, constraints, or rationale surfaced in the review that are NOT already in the ticket description.
+
+        OUTPUT RULES:
+        1. Every line you output must be a section header ("## ...") or a bullet point ("- ..."). Nothing else. No introductions, no conclusions, no commentary, no notes about omitted sections, no explanations.
+        2. A bullet point must contain a specific, concrete piece of information from the transcript. A bullet that says there is nothing to report (e.g. "Nothing new was discussed", "No relevant context") is not real content — do not write it.
+        3. NEVER invent content. Every bullet must trace back to something a participant said.
+        4. Do not restate anything already in the ticket description.
+        5. If a section would have zero bullet points, do not include its header.
+        6. If the ticket was accepted with no meaningful feedback, it is fine to output only a single Outcome bullet.
+        7. If the discussion produced nothing worth capturing, output nothing — a completely empty response.
       PROMPT
     end
 

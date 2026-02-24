@@ -13,12 +13,13 @@ module AsanaWhisperer
 
     def run(argv)
       args      = argv.dup
-      mode      = args.delete("--discovery") || args.delete("-d") ? :discovery : :requirements
-      local     = args.delete("--local")    || args.delete("-l")
+      mode      = parse_mode(args)
+      cloud     = args.delete("--cloud")    || args.delete("-c")
       benchmark = args.delete("--benchmark") || args.delete("-b")
       url       = args.first&.strip
+      local     = !cloud
 
-      abort "Error: --benchmark requires --local.\n#{usage}" if benchmark && !local
+      abort "Error: --benchmark is not compatible with --cloud.\n#{usage}" if benchmark && cloud
 
       if url && !url.empty? && !url.start_with?("-")
         run_once(url, mode: mode, local: local, benchmark: benchmark)
@@ -48,7 +49,7 @@ module AsanaWhisperer
         puts "  Ticket : #{task["name"]}"
         project_name = task.dig("projects", 0, "name")
         puts "  Project: #{project_name}" if project_name
-        puts "  Mode   : #{mode == :discovery ? "Discovery" : "Requirements"}"
+        puts "  Mode   : #{mode_label(mode)}"
         puts "  Backend: #{local ? "local" : "cloud"}"
         puts
 
@@ -178,7 +179,7 @@ module AsanaWhisperer
         puts "  Ticket : #{task["name"]}"
         project_name = task.dig("projects", 0, "name")
         puts "  Project: #{project_name}" if project_name
-        puts "  Mode   : #{mode == :discovery ? "Discovery" : "Requirements"}"
+        puts "  Mode   : #{mode_label(mode)}"
         puts
 
         audio = Audio.new(mic_source: mic_source, monitor_source: monitor_source)
@@ -420,21 +421,26 @@ module AsanaWhisperer
 
       local_elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - local_t0 if benchmark
 
-      out.puts divider
-      out.puts result[:plain]
-      out.puts divider
-      out.puts
-
-      if mode == :discovery
-        out.print "Adding comment to Asana ticket... "
-        asana.add_comment(task_gid, result[:html])
+      if result[:plain].empty?
+        out.puts "Nothing to update — the summary produced no new content."
+        out.puts
       else
-        out.print "Updating Asana ticket... "
-        asana.prepend_to_task(task_gid, result[:html], task["html_notes"])
+        out.puts divider
+        out.puts result[:plain]
+        out.puts divider
+        out.puts
+
+        if mode == :discovery || mode == :review
+          out.print "Adding comment to Asana ticket... "
+          asana.add_comment(task_gid, result[:html])
+        else
+          out.print "Updating Asana ticket... "
+          asana.prepend_to_task(task_gid, result[:html], task["html_notes"])
+        end
+        out.puts "done"
+        out.puts
+        out.puts "Updated: #{task["permalink_url"]}"
       end
-      out.puts "done"
-      out.puts
-      out.puts "Updated: #{task["permalink_url"]}"
 
       if benchmark
         out.puts
@@ -516,16 +522,16 @@ module AsanaWhisperer
         missing  = required.reject { |k| ENV[k]&.match?(/\S/) }
         return if missing.empty?
 
-        abort "Missing environment variables required for --local mode: #{missing.join(", ")}\n" \
-              "Set these in .env — see README for local model setup."
+        abort "Missing required environment variables: #{missing.join(", ")}\n" \
+              "Set these in .env — see README for local model setup.\n" \
+              "To use cloud APIs instead, pass --cloud."
       else
         required = %w[ASANA_ACCESS_TOKEN OPENAI_API_KEY ANTHROPIC_API_KEY]
         missing  = required.reject { |k| ENV[k]&.match?(/\S/) }
         return if missing.empty?
 
-        abort "Missing required environment variables: #{missing.join(", ")}\n" \
-              "Copy .env.example to .env and fill in your API keys.\n" \
-              "To use local models instead, pass --local (and set WHISPER_API_URL and LLM_API_URL in .env)."
+        abort "Missing environment variables required for --cloud mode: #{missing.join(", ")}\n" \
+              "Set these in .env — see README for API key setup."
       end
     end
 
@@ -548,13 +554,42 @@ module AsanaWhisperer
       puts
     end
 
+    VALID_MODES = %w[requirements discovery review].freeze
+
+    def parse_mode(args)
+      # Handle --mode=VALUE (equals form)
+      if (idx = args.index { |a| a.start_with?("--mode=") })
+        value = args.delete_at(idx).sub("--mode=", "")
+      # Handle --mode VALUE or -m VALUE (space-separated form)
+      elsif (idx = args.index("--mode") || args.index("-m"))
+        args.delete_at(idx)
+        value = args.delete_at(idx) # the next arg is the value
+      end
+
+      return :requirements unless value
+
+      value = value.to_s.strip.downcase
+      unless VALID_MODES.include?(value)
+        abort "Unknown mode: #{value}\nValid modes: #{VALID_MODES.join(", ")}\n#{usage}"
+      end
+      value.to_sym
+    end
+
+    def mode_label(mode)
+      case mode
+      when :discovery then "Discovery"
+      when :review    then "Design Review"
+      else                 "Requirements"
+      end
+    end
+
     def divider
       "─" * 60
     end
 
     def usage
       <<~USAGE
-        Usage: asana-whisperer [--discovery] [--local] [--benchmark] [<asana-task-url>]
+        Usage: asana-whisperer [--mode=MODE] [--cloud] [--benchmark] [<asana-task-url>]
 
         When launched without a URL, enters interactive mode: prompts for an Asana
         ticket URL, records, then immediately asks for the next URL while the prior
@@ -565,35 +600,48 @@ module AsanaWhisperer
         When launched with a URL, records once and exits (one-and-done mode).
 
         Options:
-          --discovery, -d  Discovery mode: surfaces open questions, context, and next
-                           steps, then adds a comment to the ticket (default: Requirements
-                           mode, which extracts concrete requirements and prepends them to
-                           the ticket description)
-          --local, -l      Use local models instead of cloud APIs (requires Ollama and
-                           faster-whisper-server to be running). No API keys needed.
-                           Model defaults can be overridden via WHISPER_MODEL / LLM_MODEL
-                           in .env.
-          --benchmark, -b  Benchmark mode: runs both local and cloud pipelines on the
-                           same audio and prints a timing comparison. Requires --local
-                           and a URL (one-and-done mode only). Both local and cloud env
-                           vars must be set.
+          --mode=MODE, -m MODE  Set the summarization mode (default: requirements):
+                                  requirements — extracts concrete requirements and
+                                                 prepends them to the ticket description
+                                  discovery    — surfaces open questions, context, and
+                                                 next steps; adds a comment to the ticket
+                                  review       — captures the outcome of a design review
+                                                 (accepted or sent back), requested changes,
+                                                 and context; adds a comment to the ticket
+          --cloud, -c           Use cloud APIs instead of local models (OpenAI Whisper for
+                                transcription, Anthropic Claude for summarization). Requires
+                                OPENAI_API_KEY and ANTHROPIC_API_KEY in .env.
+          --benchmark, -b       Benchmark mode: runs both local and cloud pipelines on the
+                                same audio and prints a timing comparison. Uses the default
+                                local backend, so not compatible with --cloud. One-and-done
+                                mode only (requires a URL). Both local and cloud env vars
+                                must be set.
 
         Examples:
           asana-whisperer
           asana-whisperer https://app.asana.com/0/123456/789012
-          asana-whisperer --discovery https://app.asana.com/1/ws/project/123/task/456
-          asana-whisperer --local https://app.asana.com/0/123456/789012
-          asana-whisperer --local --discovery https://app.asana.com/0/123456/789012
-          asana-whisperer --local --benchmark https://app.asana.com/0/123456/789012
+          asana-whisperer --mode=discovery https://app.asana.com/1/ws/project/123/task/456
+          asana-whisperer --mode=review https://app.asana.com/0/123456/789012
+          asana-whisperer -m discovery https://app.asana.com/0/123456/789012
+          asana-whisperer --cloud https://app.asana.com/0/123456/789012
+          asana-whisperer --cloud --mode=discovery https://app.asana.com/0/123456/789012
+          asana-whisperer --benchmark https://app.asana.com/0/123456/789012
 
         Starts recording your microphone (and system audio if available),
         then on Enter/Ctrl+C transcribes and summarizes the discussion
         into the Asana ticket.
 
+        By default, uses local models (Ollama + faster-whisper-server). Model
+        defaults can be overridden via WHISPER_MODEL / LLM_MODEL in .env.
+
         Required environment variables (set in .env):
-          OPENAI_API_KEY       — OpenAI API key (for Whisper transcription; not needed with --local)
-          ANTHROPIC_API_KEY    — Anthropic API key (for Claude summarization; not needed with --local)
           ASANA_ACCESS_TOKEN   — Asana personal access token
+          WHISPER_API_URL      — Local Whisper endpoint (e.g. http://localhost:8000/v1/audio/transcriptions)
+          LLM_API_URL          — Local LLM endpoint (e.g. http://localhost:11434/v1/chat/completions)
+
+        Additional variables for --cloud or --benchmark:
+          OPENAI_API_KEY       — OpenAI API key (for Whisper transcription)
+          ANTHROPIC_API_KEY    — Anthropic API key (for Claude summarization)
       USAGE
     end
   end
